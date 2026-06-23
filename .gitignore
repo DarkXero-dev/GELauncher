@@ -6,3 +6,11 @@ dist/
 build/
 *.spec
 .superpowers/
+
+# Game files - not part of launcher source
+GoldenEye.exe
+ge.exe
+ge.toml
+*.dll
+assets/
+logs/
