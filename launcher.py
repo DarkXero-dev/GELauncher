@@ -160,3 +160,55 @@ class TrayManager:
         if self._icon is not None:
             self._icon.stop()
             self._icon = None
+
+
+# ---------------------------------------------------------------------------
+# ProgressModal
+# ---------------------------------------------------------------------------
+
+class ProgressModal:
+    def __init__(self, parent: ctk.CTk):
+        self._parent = parent
+        self._win: Optional[ctk.CTkToplevel] = None
+        self._status_label: Optional[ctk.CTkLabel] = None
+        self._bar: Optional[ctk.CTkProgressBar] = None
+
+    def run_update(self) -> None:
+        self._win = ctk.CTkToplevel(self._parent)
+        self._win.title("Updating ReComp Engine")
+        self._win.geometry("420x140")
+        self._win.resizable(False, False)
+        self._win.grab_set()
+        self._win.focus_force()
+
+        self._status_label = ctk.CTkLabel(
+            self._win, text="Starting...", font=("Segoe UI", 13)
+        )
+        self._status_label.pack(pady=(20, 8), padx=20)
+
+        self._bar = ctk.CTkProgressBar(self._win, width=380)
+        self._bar.set(0)
+        self._bar.pack(pady=(0, 20), padx=20)
+
+        mgr = UpdateManager(get_game_dir(), self._on_progress)
+        t = threading.Thread(target=self._run_thread, args=(mgr,), daemon=True)
+        t.start()
+
+    def _on_progress(self, status: str, fraction: float) -> None:
+        if self._win is None:
+            return
+        self._win.after(0, lambda: self._status_label.configure(text=status))
+        self._win.after(0, lambda: self._bar.set(fraction))
+
+    def _run_thread(self, mgr: UpdateManager) -> None:
+        try:
+            mgr.check_and_update()
+            self._win.after(2000, self._win.destroy)
+        except UpdateError as e:
+            err_msg = str(e)
+            self._win.after(0, lambda: self._show_error(err_msg))
+
+    def _show_error(self, msg: str) -> None:
+        self._status_label.configure(text=f"Error: {msg}")
+        self._bar.configure(progress_color="red")
+        ctk.CTkButton(self._win, text="Close", command=self._win.destroy).pack(pady=8)
