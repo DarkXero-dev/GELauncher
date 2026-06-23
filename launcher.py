@@ -149,6 +149,28 @@ class UpdateManager:
         finally:
             shutil.rmtree(tmp_dir, ignore_errors=True)
 
+    def _try_libc_extract(self, u_rar: str, u_dest: str) -> bool:
+        """Wine-only: call Linux libc.system() directly, bypassing Wine CreateProcess."""
+        try:
+            import ctypes, ctypes.util
+            libc = ctypes.CDLL(ctypes.util.find_library("c") or "libc.so.6")
+        except Exception:
+            return False
+        cmds = [
+            f'7zz x "{u_rar}" -o"{u_dest}" -y 2>/dev/null',
+            f'7z  x "{u_rar}" -o"{u_dest}" -y 2>/dev/null',
+            f'unrar x -y "{u_rar}" "{u_dest}/" 2>/dev/null',
+        ]
+        for cmd in cmds:
+            self.progress("Extracting archive...", 0.1)
+            try:
+                ret = libc.system(cmd.encode())
+                if ret == 0:
+                    return True
+            except Exception:
+                continue
+        return False
+
     def _run_extractor(self, rar_path: str, dest_dir: str) -> None:
         # Under Wine, Python paths are Windows-style; Linux tools need Unix paths
         if _WINE:
@@ -157,6 +179,12 @@ class UpdateManager:
         else:
             u_rar = rar_path
             u_dest = dest_dir
+
+        # Under Wine: try Linux libc.system() first - bypasses Wine's CreateProcess
+        # entirely and calls the real Linux /bin/sh which can find system tools
+        if _WINE:
+            if self._try_libc_extract(u_rar, u_dest):
+                return
 
         candidates = [
             # Linux explicit paths (works natively; under Wine, executes the Linux ELF directly)
