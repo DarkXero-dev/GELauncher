@@ -149,39 +149,97 @@ class UpdateManager:
         finally:
             shutil.rmtree(tmp_dir, ignore_errors=True)
 
-    def _try_libc_extract(self, u_rar: str, u_dest: str) -> bool:
-        """Wine-only: call Linux libc.system() directly, bypassing Wine CreateProcess.
-        Uses full binary paths so Linux PATH is not required."""
+    # Shell script written to /tmp and executed natively on Linux, bypassing Wine subprocess
+    _LINUX_EXTRACT_SCRIPT = (
+        "#!/bin/sh\n"
+        "/usr/bin/7z x \"$1\" -o\"$2\" -y >/dev/null 2>&1 && exit 0\n"
+        "/usr/bin/7za x \"$1\" -o\"$2\" -y >/dev/null 2>&1 && exit 0\n"
+        "/usr/bin/unrar x -y \"$1\" \"$2/\" >/dev/null 2>&1 && exit 0\n"
+        "/usr/local/bin/7z x \"$1\" -o\"$2\" -y >/dev/null 2>&1 && exit 0\n"
+        "/usr/local/bin/unrar x -y \"$1\" \"$2/\" >/dev/null 2>&1 && exit 0\n"
+        "exit 1\n"
+    )
+
+    def _try_native_linux_helper(self, u_rar: str, u_dest: str) -> tuple:
+        """Write a shell script to /tmp and run it via libc.system() bypassing Wine entirely.
+        Returns (success: bool, diag_lines: list[str])."""
         import ctypes
+        diag = []
+
+        # Load real Linux libc via dlopen path
         libc = None
-        for path in ("/usr/lib/libc.so.6", "/usr/lib64/libc.so.6",
-                     "/lib/x86_64-linux-gnu/libc.so.6", "/lib64/libc.so.6"):
+        for lib_path in ("/usr/lib/libc.so.6", "/usr/lib64/libc.so.6",
+                         "/lib/x86_64-linux-gnu/libc.so.6", "/lib64/libc.so.6"):
             try:
-                libc = ctypes.CDLL(path)
+                libc = ctypes.CDLL(lib_path)
+                diag.append(f"libc loaded  : {lib_path}")
                 break
-            except OSError:
-                continue
+            except OSError as e:
+                diag.append(f"libc fail    : {lib_path} ({e})")
+
         if libc is None:
-            return False
-        cmds = [
-            f'/usr/bin/7z   x "{u_rar}" -o"{u_dest}" -y 2>/dev/null',
-            f'/usr/bin/7za  x "{u_rar}" -o"{u_dest}" -y 2>/dev/null',
-            f'/usr/bin/7zz  x "{u_rar}" -o"{u_dest}" -y 2>/dev/null',
-            f'/usr/bin/unrar x -y "{u_rar}" "{u_dest}/" 2>/dev/null',
-            f'/usr/local/bin/7z   x "{u_rar}" -o"{u_dest}" -y 2>/dev/null',
-            f'/usr/local/bin/unrar x -y "{u_rar}" "{u_dest}/" 2>/dev/null',
+            diag.append("libc         : NOT LOADED - ctypes cannot load Linux libc under this Wine")
+            return False, diag
+
+        # Write extraction helper to /tmp via Z: path (Wine file I/O maps Z:\tmp -> /tmp)
+        wine_helper = "Z:\\tmp\\ge_launcher_extract.sh"
+        unix_helper = "/tmp/ge_launcher_extract.sh"
+        try:
+            with open(wine_helper, "w") as f:
+                f.write(self._LINUX_EXTRACT_SCRIPT)
+            diag.append(f"helper wrote : {unix_helper}")
+        except Exception as e:
+            diag.append(f"helper write : FAILED ({e})")
+            return False, diag
+
+        # chmod +x via libc.system so Linux shell can execute it
+        libc.system(f"chmod +x {unix_helper}".encode())
+
+        self.progress("Extracting archive...", 0.1)
+        cmd = f'/bin/sh "{unix_helper}" "{u_rar}" "{u_dest}"'
+        try:
+            ret = libc.system(cmd.encode())
+            diag.append(f"libc.system  : ret={ret}  cmd={cmd}")
+            return ret == 0, diag
+        except Exception as e:
+            diag.append(f"libc.system  : EXCEPTION ({e})")
+            return False, diag
+
+    def _try_pipe_extract(self, u_rar: str, u_dest: str) -> tuple:
+        """Use subprocess PIPE instead of DEVNULL - avoids WinError 6 Invalid Handle.
+        Returns (success: bool, diag_lines: list[str])."""
+        diag = []
+        candidates = [
+            ["/usr/bin/7z",    "x", u_rar, f"-o{u_dest}", "-y"],
+            ["/usr/bin/7za",   "x", u_rar, f"-o{u_dest}", "-y"],
+            ["/usr/bin/unrar", "x", "-y", u_rar, u_dest + "/"],
         ]
-        for cmd in cmds:
-            self.progress("Extracting archive...", 0.1)
+        for cmd in candidates:
             try:
-                if libc.system(cmd.encode()) == 0:
-                    return True
-            except Exception:
+                proc = subprocess.Popen(
+                    cmd,
+                    stdin=subprocess.PIPE,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                )
+                proc.stdin.close()
+            except FileNotFoundError:
+                diag.append(f"PIPE NOT_FOUND : {cmd[0]}")
                 continue
-        return False
+            except OSError as e:
+                diag.append(f"PIPE OS_ERROR  : {cmd[0]} ({e})")
+                continue
+            fake = 0.0
+            while proc.poll() is None:
+                time.sleep(0.4)
+                fake = min(fake + 0.008, 0.45)
+                self.progress("Extracting archive...", fake)
+            diag.append(f"PIPE EXIT({proc.returncode:3d}) : {cmd[0]}")
+            if proc.returncode == 0:
+                return True, diag
+        return False, diag
 
     def _run_extractor(self, rar_path: str, dest_dir: str) -> None:
-        # Under Wine, Python paths are Windows-style; Linux tools need Unix paths
         if _WINE:
             u_rar = _wine_to_unix(rar_path)
             u_dest = _wine_to_unix(dest_dir)
@@ -189,26 +247,31 @@ class UpdateManager:
             u_rar = rar_path
             u_dest = dest_dir
 
-        # Under Wine: try Linux libc.system() first - bypasses Wine's CreateProcess
-        # entirely and calls the real Linux /bin/sh which can find system tools
+        diag_extra = []
+
         if _WINE:
-            if self._try_libc_extract(u_rar, u_dest):
+            # 1. Write native Linux shell script + call via libc.system() - fully bypasses Wine
+            self.progress("Extracting archive...", 0.05)
+            ok, lines = self._try_native_linux_helper(u_rar, u_dest)
+            diag_extra.extend(lines)
+            if ok:
                 return
 
+            # 2. subprocess with PIPE (avoids WinError 6 caused by DEVNULL handle)
+            ok, lines = self._try_pipe_extract(u_rar, u_dest)
+            diag_extra.extend(lines)
+            if ok:
+                return
+
+        # 3. Standard subprocess with DEVNULL (works on native Linux/Windows)
         candidates = [
-            # Linux explicit paths (works natively; under Wine, executes the Linux ELF directly)
-            ["/usr/bin/7zz",  "x", u_rar, f"-o{u_dest}", "-y"],   # Arch 7zip package
-            ["/usr/bin/7z",   "x", u_rar, f"-o{u_dest}", "-y"],
-            ["/usr/bin/7za",  "x", u_rar, f"-o{u_dest}", "-y"],
+            ["/usr/bin/7z",    "x", u_rar, f"-o{u_dest}", "-y"],
+            ["/usr/bin/7za",   "x", u_rar, f"-o{u_dest}", "-y"],
             ["/usr/bin/unrar", "x", "-y", u_rar, u_dest + "/"],
-            ["/usr/local/bin/7zz",  "x", u_rar, f"-o{u_dest}", "-y"],
             ["/usr/local/bin/7z",   "x", u_rar, f"-o{u_dest}", "-y"],
             ["/usr/local/bin/unrar", "x", "-y", u_rar, u_dest + "/"],
-            # PATH-based (native Linux only; Wine won't find these)
-            ["7zz",   "x", u_rar, f"-o{u_dest}", "-y"],
             ["7z",    "x", u_rar, f"-o{u_dest}", "-y"],
             ["unrar", "x", "-y", u_rar, u_dest + "/"],
-            # Windows-native tools inside Wine prefix
             [r"C:\Program Files\7-Zip\7z.exe", "x", rar_path, f"-o{dest_dir}", "-y"],
             [r"C:\Program Files (x86)\7-Zip\7z.exe", "x", rar_path, f"-o{dest_dir}", "-y"],
             [r"C:\Program Files\WinRAR\UnRAR.exe", "x", "-y", rar_path, dest_dir + os.sep],
@@ -238,7 +301,6 @@ class UpdateManager:
                 return
             tried.append(f"EXIT({proc.returncode:3d}) : {cmd[0]}")
 
-        # Write diagnostic log next to the launcher so the user can inspect it
         diag_path = os.path.join(self.game_dir, "ge_launcher_diag.txt")
         try:
             with open(diag_path, "w") as f:
@@ -248,6 +310,11 @@ class UpdateManager:
                 f.write(f"u_rar        : {u_rar}\n")
                 f.write(f"dest_dir     : {dest_dir}\n")
                 f.write(f"u_dest       : {u_dest}\n\n")
+                if diag_extra:
+                    f.write("Wine-specific attempts:\n")
+                    for line in diag_extra:
+                        f.write(f"  {line}\n")
+                    f.write("\n")
                 f.write("Candidates tried:\n")
                 for t in tried:
                     f.write(f"  {t}\n")
