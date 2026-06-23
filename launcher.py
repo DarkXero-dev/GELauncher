@@ -152,7 +152,9 @@ class UpdateManager:
         ]
         for cmd in candidates:
             try:
-                result = subprocess.run(cmd, capture_output=True, timeout=300)
+                result = subprocess.run(
+                    cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=300
+                )
                 if result.returncode == 0:
                     return
             except FileNotFoundError:
@@ -301,8 +303,9 @@ class App(ctk.CTk):
 
         self.title("GoldenEye Recomp Launcher")
         self._icon_img = ImageTk.PhotoImage(Image.open(get_asset_path("icon.png")))
-        self.iconphoto(True, self._icon_img)
         self.geometry("600x320")
+        # CTK sets its own icon during init; override it after the event loop starts
+        self.after(0, lambda: self.iconphoto(True, self._icon_img))
         self.resizable(False, False)
 
         self._tray = TrayManager(on_restore=self._restore, on_quit=self._quit)
@@ -322,15 +325,26 @@ class App(ctk.CTk):
         self._banner_label = ctk.CTkLabel(self, image=self._banner_img, text="")
         self._banner_label.pack()
 
-        # Bottom row: buttons centered, info button right-aligned
-        bottom = ctk.CTkFrame(self, fg_color="transparent")
-        bottom.pack(fill="x", padx=12, pady=16)
-        bottom.columnconfigure(0, weight=1)
-        bottom.columnconfigure(1, weight=0)
-        bottom.columnconfigure(2, weight=1)
+        # Info button - top-right corner
+        info_btn = ctk.CTkButton(
+            self,
+            text="ⓘ",
+            width=34,
+            height=34,
+            corner_radius=17,
+            font=("Segoe UI", 15),
+            fg_color="transparent",
+            hover_color="#252540",
+            text_color="#6677aa",
+            border_width=1,
+            border_color="#3a3a5a",
+            command=self._show_about,
+        )
+        info_btn.place(x=558, y=6)
 
-        btn_frame = ctk.CTkFrame(bottom, fg_color="transparent")
-        btn_frame.grid(row=0, column=1)
+        # Centered buttons
+        btn_frame = ctk.CTkFrame(self, fg_color="transparent")
+        btn_frame.pack(pady=16)
 
         ctk.CTkButton(
             btn_frame,
@@ -351,22 +365,6 @@ class App(ctk.CTk):
             hover_color="#1e441e",
             command=self._start_update,
         ).pack(side="left")
-
-        info_btn = ctk.CTkButton(
-            bottom,
-            text="ⓘ",
-            width=34,
-            height=34,
-            corner_radius=17,
-            font=("Segoe UI", 15),
-            fg_color="transparent",
-            hover_color="#252540",
-            text_color="#6677aa",
-            border_width=1,
-            border_color="#3a3a5a",
-            command=self._show_about,
-        )
-        info_btn.grid(row=0, column=2, sticky="e")
 
     def _launch_game(self) -> None:
         game_exe = os.path.join(get_game_dir(), "GoldenEye.exe")
