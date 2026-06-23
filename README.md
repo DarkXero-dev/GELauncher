@@ -19,3 +19,7 @@ A portable Windows launcher for [GoldenEye Recomp](https://github.com/SunJaycy/G
 
 To restore from the tray: double-click the tray icon, or right-click and choose **Restore**.
 To quit: right-click the tray icon and choose **Quit**.
+
+## Requirements
+
+- **[7-Zip](https://www.7-zip.org)** or **[WinRAR](https://www.rarlab.com)** must be installed to use the Update ReComp Engine feature.
