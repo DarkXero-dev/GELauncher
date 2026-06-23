@@ -29,7 +29,9 @@ jobs:
           --onefile
           --windowed
           --name "GoldenEye Launcher"
+          --icon "icon.png"
           --add-data "banner.png;."
+          --add-data "icon.png;."
           launcher.py
 
       - name: Upload artifact

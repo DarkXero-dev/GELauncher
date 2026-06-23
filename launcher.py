@@ -6,7 +6,7 @@ import subprocess
 import tempfile
 import requests
 import customtkinter as ctk
-from PIL import Image
+from PIL import Image, ImageTk
 from typing import Callable, Optional
 import pystray
 
@@ -159,7 +159,7 @@ class TrayManager:
     def show(self) -> None:
         if self._icon is not None:
             return
-        img = Image.open(get_asset_path("banner.png")).resize((64, 64))
+        img = Image.open(get_asset_path("icon.png")).resize((64, 64))
         menu = pystray.Menu(
             pystray.MenuItem("Restore", lambda icon, item: self._on_restore()),
             pystray.MenuItem("Quit", lambda icon, item: self._on_quit()),
@@ -250,6 +250,8 @@ class App(ctk.CTk):
         ctk.set_default_color_theme("dark-blue")
 
         self.title("GoldenEye Recomp Launcher")
+        self._icon_img = ImageTk.PhotoImage(Image.open(get_asset_path("icon.png")))
+        self.iconphoto(True, self._icon_img)
         self.geometry("600x320")
         self.resizable(False, False)
 
