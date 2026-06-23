@@ -254,7 +254,10 @@ class TrayManager:
 
     def hide(self) -> None:
         if self._icon is not None:
-            self._icon.stop()
+            try:
+                self._icon.stop()
+            except Exception:
+                pass
             self._icon = None
 
 
@@ -501,8 +504,14 @@ class App(ctk.CTk):
         lnk2.bind("<Button-1>", lambda e: webbrowser.open("https://github.com/SunJaycy/GoldenEye-Recomp"))
 
     def _to_tray(self) -> None:
-        self.withdraw()
-        self._tray.show()
+        if sys.platform.startswith("linux"):
+            # On Linux, tray support is DE/compositor-dependent - minimize to taskbar instead
+            # so the window is always recoverable. Still attempt tray icon as bonus.
+            self.iconify()
+            self._tray.show()
+        else:
+            self.withdraw()
+            self._tray.show()
 
     def _restore(self) -> None:
         self.after(0, self._do_restore)
