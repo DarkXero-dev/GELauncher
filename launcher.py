@@ -135,12 +135,20 @@ class UpdateManager:
 
     def _run_extractor(self, rar_path: str, dest_dir: str) -> None:
         candidates = [
+            # PATH-based (works on any OS)
             ["7z", "x", rar_path, f"-o{dest_dir}", "-y"],
+            ["unrar", "x", "-y", rar_path, dest_dir + os.sep],
+            # Windows 7-Zip
             [r"C:\Program Files\7-Zip\7z.exe", "x", rar_path, f"-o{dest_dir}", "-y"],
             [r"C:\Program Files (x86)\7-Zip\7z.exe", "x", rar_path, f"-o{dest_dir}", "-y"],
-            ["unrar", "x", "-y", rar_path, dest_dir + os.sep],
+            # Windows WinRAR
             [r"C:\Program Files\WinRAR\UnRAR.exe", "x", "-y", rar_path, dest_dir + os.sep],
             [r"C:\Program Files\WinRAR\WinRAR.exe", "x", "-y", rar_path, dest_dir + os.sep],
+            # Linux explicit paths
+            ["/usr/bin/7z", "x", rar_path, f"-o{dest_dir}", "-y"],
+            ["/usr/local/bin/7z", "x", rar_path, f"-o{dest_dir}", "-y"],
+            ["/usr/bin/unrar", "x", "-y", rar_path, dest_dir + os.sep],
+            ["/usr/local/bin/unrar", "x", "-y", rar_path, dest_dir + os.sep],
         ]
         for cmd in candidates:
             try:
@@ -149,8 +157,16 @@ class UpdateManager:
                     return
             except FileNotFoundError:
                 continue
+        if sys.platform.startswith("linux"):
+            raise UpdateError(
+                "No extraction tool found.\n"
+                "Install p7zip or unrar:\n"
+                "  Arch:          sudo pacman -S p7zip\n"
+                "  Ubuntu/Debian: sudo apt install p7zip-full"
+            )
         raise UpdateError(
-            "No extraction tool found. Install 7-Zip (7-zip.org) or WinRAR to enable updates."
+            "No extraction tool found.\n"
+            "Install 7-Zip (7-zip.org) or WinRAR to enable updates."
         )
 
     def _copy_files(self, src_dir: str) -> None:
@@ -267,7 +283,8 @@ class ProgressModal:
             self._win.after(0, lambda: self._show_error(err_msg))
 
     def _show_error(self, msg: str) -> None:
-        self._status_label.configure(text=f"Error: {msg}")
+        self._win.geometry("420x180")
+        self._status_label.configure(text=f"Error: {msg}", wraplength=390)
         self._bar.configure(progress_color="red")
         ctk.CTkButton(self._win, text="Close", command=self._close_modal).pack(pady=8)
 
@@ -305,45 +322,51 @@ class App(ctk.CTk):
         self._banner_label = ctk.CTkLabel(self, image=self._banner_img, text="")
         self._banner_label.pack()
 
-        # Info button - top-right corner over banner
-        info_btn = ctk.CTkButton(
-            self,
-            text="ⓘ",
-            width=30,
-            height=30,
-            corner_radius=15,
-            font=("Segoe UI", 14),
-            fg_color="#1a1a2e",
-            hover_color="#2a2a4e",
-            border_width=1,
-            border_color="#4a4a6e",
-            command=self._show_about,
-        )
-        info_btn.place(x=562, y=8)
+        # Bottom row: buttons centered, info button right-aligned
+        bottom = ctk.CTkFrame(self, fg_color="transparent")
+        bottom.pack(fill="x", padx=12, pady=16)
+        bottom.columnconfigure(0, weight=1)
+        bottom.columnconfigure(1, weight=0)
+        bottom.columnconfigure(2, weight=1)
 
-        # Centered buttons
-        btn_frame = ctk.CTkFrame(self, fg_color="transparent")
-        btn_frame.pack(pady=12)
+        btn_frame = ctk.CTkFrame(bottom, fg_color="transparent")
+        btn_frame.grid(row=0, column=1)
 
         ctk.CTkButton(
             btn_frame,
             text="Launch Game",
-            width=260,
+            width=255,
             height=44,
             font=("Segoe UI", 14, "bold"),
             command=self._launch_game,
-        ).pack(side="left", padx=(0, 10))
+        ).pack(side="left", padx=(0, 8))
 
         ctk.CTkButton(
             btn_frame,
             text="Update ReComp Engine",
-            width=260,
+            width=255,
             height=44,
             font=("Segoe UI", 14, "bold"),
             fg_color="#2a5e2a",
             hover_color="#1e441e",
             command=self._start_update,
         ).pack(side="left")
+
+        info_btn = ctk.CTkButton(
+            bottom,
+            text="ⓘ",
+            width=34,
+            height=34,
+            corner_radius=17,
+            font=("Segoe UI", 15),
+            fg_color="transparent",
+            hover_color="#252540",
+            text_color="#6677aa",
+            border_width=1,
+            border_color="#3a3a5a",
+            command=self._show_about,
+        )
+        info_btn.grid(row=0, column=2, sticky="e")
 
     def _launch_game(self) -> None:
         game_exe = os.path.join(get_game_dir(), "GoldenEye.exe")
@@ -366,38 +389,52 @@ class App(ctk.CTk):
     def _show_about(self) -> None:
         win = ctk.CTkToplevel(self)
         win.title("About")
-        win.geometry("380x140")
+        win.geometry("390x210")
         win.resizable(False, False)
         win.grab_set()
         win.focus_force()
         self.update_idletasks()
-        px = self.winfo_x() + (self.winfo_width() - 380) // 2
-        py = self.winfo_y() + (self.winfo_height() - 140) // 2
-        win.geometry(f"380x140+{px}+{py}")
+        px = self.winfo_x() + (self.winfo_width() - 390) // 2
+        py = self.winfo_y() + (self.winfo_height() - 210) // 2
+        win.geometry(f"390x210+{px}+{py}")
 
         container = ctk.CTkFrame(win, fg_color="transparent")
-        container.pack(expand=True, fill="both", padx=24, pady=20)
+        container.pack(expand=True, fill="both", padx=20, pady=16)
 
-        # Row 1: Launcher by DarkXero : Github
+        # Circular icon graphic
+        icon_wrap = ctk.CTkFrame(container, width=56, height=56, corner_radius=28,
+                                  fg_color="#152a50", border_width=2, border_color="#4a7fc1")
+        icon_wrap.pack(anchor="center", pady=(0, 6))
+        icon_wrap.pack_propagate(False)
+        ctk.CTkLabel(icon_wrap, text="i", font=("Segoe UI", 22, "bold"),
+                     text_color="#c8deff").pack(expand=True)
+
+        ctk.CTkLabel(container, text="GoldenEye Launcher",
+                     font=("Segoe UI", 12), text_color="#7a90b0").pack(anchor="center", pady=(0, 14))
+
+        # Row 1: Launcher by DarkXero  ·  GitHub ↗
         row1 = ctk.CTkFrame(container, fg_color="transparent")
-        row1.pack(anchor="center", pady=(0, 10))
-        ctk.CTkLabel(row1, text="Launcher by ", font=("Segoe UI", 13)).pack(side="left")
-        ctk.CTkLabel(row1, text="DarkXero", font=("Segoe UI", 13, "bold")).pack(side="left")
-        ctk.CTkLabel(row1, text="  :  ", font=("Segoe UI", 13)).pack(side="left")
-        lnk1 = ctk.CTkLabel(row1, text="Github", font=("Segoe UI", 13),
-                             text_color="#5ba3e0", cursor="hand2")
+        row1.pack(anchor="center", pady=(0, 7))
+        ctk.CTkLabel(row1, text="Launcher by ", font=("Segoe UI", 12)).pack(side="left")
+        ctk.CTkLabel(row1, text="DarkXero", font=("Segoe UI", 12, "bold")).pack(side="left")
+        ctk.CTkLabel(row1, text="  ·  ", font=("Segoe UI", 12),
+                     text_color="#3a3a55").pack(side="left")
+        lnk1 = ctk.CTkLabel(row1, text="GitHub ↗", font=("Segoe UI", 12),
+                             text_color="#4a90d9", cursor="hand2")
         lnk1.pack(side="left")
         lnk1.bind("<Button-1>", lambda e: webbrowser.open("https://github.com/DarkXero-dev/GELauncher"))
 
-        # Row 2: GoldenEye Recomp by SunJaycy
+        # Row 2: GoldenEye Recomp by SunJaycy  ·  GitHub ↗
         row2 = ctk.CTkFrame(container, fg_color="transparent")
         row2.pack(anchor="center")
-        lnk2 = ctk.CTkLabel(row2, text="GoldenEye Recomp", font=("Segoe UI", 13),
-                             text_color="#5ba3e0", cursor="hand2")
+        ctk.CTkLabel(row2, text="GoldenEye Recomp by ", font=("Segoe UI", 12)).pack(side="left")
+        ctk.CTkLabel(row2, text="SunJaycy", font=("Segoe UI", 12, "bold")).pack(side="left")
+        ctk.CTkLabel(row2, text="  ·  ", font=("Segoe UI", 12),
+                     text_color="#3a3a55").pack(side="left")
+        lnk2 = ctk.CTkLabel(row2, text="GitHub ↗", font=("Segoe UI", 12),
+                             text_color="#4a90d9", cursor="hand2")
         lnk2.pack(side="left")
         lnk2.bind("<Button-1>", lambda e: webbrowser.open("https://github.com/SunJaycy/GoldenEye-Recomp"))
-        ctk.CTkLabel(row2, text=" by ", font=("Segoe UI", 13)).pack(side="left")
-        ctk.CTkLabel(row2, text="SunJaycy", font=("Segoe UI", 13, "bold")).pack(side="left")
 
     def _to_tray(self) -> None:
         self.withdraw()
