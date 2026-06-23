@@ -153,7 +153,11 @@ class UpdateManager:
         for cmd in candidates:
             try:
                 result = subprocess.run(
-                    cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=300
+                    cmd,
+                    stdin=subprocess.DEVNULL,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    timeout=300,
                 )
                 if result.returncode == 0:
                     return
@@ -304,8 +308,9 @@ class App(ctk.CTk):
         self.title("GoldenEye Recomp Launcher")
         self._icon_img = ImageTk.PhotoImage(Image.open(get_asset_path("icon.png")))
         self.geometry("600x320")
-        # CTK sets its own icon during init; override it after the event loop starts
-        self.after(0, lambda: self.iconphoto(True, self._icon_img))
+        self.iconphoto(True, self._icon_img)
+        # Re-apply after window is mapped to beat any WM/CTK icon reset
+        self.bind("<Map>", self._apply_icon, add="+")
         self.resizable(False, False)
 
         self._tray = TrayManager(on_restore=self._restore, on_quit=self._quit)
@@ -314,6 +319,10 @@ class App(ctk.CTk):
         self.protocol("WM_DELETE_WINDOW", self._do_quit)
 
         self._build_ui()
+
+    def _apply_icon(self, event=None) -> None:
+        self.iconphoto(True, self._icon_img)
+        self.unbind("<Map>")
 
     def _build_ui(self) -> None:
         banner_path = get_asset_path("banner.png")
