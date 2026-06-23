@@ -131,3 +131,32 @@ class UpdateManager:
                         with zf.open(member) as src, open(dest, "wb") as dst:
                             dst.write(src.read())
                 self.progress("Extracting...", (i + 1) / len(members))
+
+
+# ---------------------------------------------------------------------------
+# TrayManager
+# ---------------------------------------------------------------------------
+
+class TrayManager:
+    def __init__(self, on_restore: Callable[[], None], on_quit: Callable[[], None]):
+        self._on_restore = on_restore
+        self._on_quit = on_quit
+        self._icon: Optional[pystray.Icon] = None
+
+    def show(self) -> None:
+        if self._icon is not None:
+            return
+        img = Image.open(get_asset_path("banner.png")).resize((64, 64))
+        menu = pystray.Menu(
+            pystray.MenuItem("Restore", lambda icon, item: self._on_restore()),
+            pystray.MenuItem("Quit", lambda icon, item: self._on_quit()),
+        )
+        self._icon = pystray.Icon("GoldenEye Launcher", img, "GoldenEye Launcher", menu)
+        self._icon.on_activate = lambda icon: self._on_restore()
+        t = threading.Thread(target=self._icon.run, daemon=True)
+        t.start()
+
+    def hide(self) -> None:
+        if self._icon is not None:
+            self._icon.stop()
+            self._icon = None
