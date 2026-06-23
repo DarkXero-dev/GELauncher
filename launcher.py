@@ -17,22 +17,10 @@ import pystray
 # Helpers
 # ---------------------------------------------------------------------------
 
-# True when Python is running inside Wine on Linux
-_WINE = sys.platform == "win32" and os.path.exists("/proc/version")
-
-
-def _wine_to_unix(path: str) -> str:
-    """Convert a Z:-drive Wine path to a Unix path. Wine always maps Z: to /."""
-    if len(path) >= 2 and path[0].upper() == "Z" and path[1] == ":":
-        return path[2:].replace("\\", "/")
-    return path
-
-
-# Temp dir forced to Z:\tmp under Wine so _wine_to_unix converts paths cleanly
-_WINE_TMP = "Z:\\tmp" if _WINE else None
-
-
 def get_game_dir() -> str:
+    # AppImage sets APPIMAGE env var to the .AppImage file path
+    if os.environ.get("APPIMAGE"):
+        return os.path.dirname(os.path.abspath(os.environ["APPIMAGE"]))
     if getattr(sys, "frozen", False):
         return os.path.dirname(sys.executable)
     return os.path.dirname(os.path.abspath(__file__))
@@ -121,7 +109,7 @@ class UpdateManager:
             resp = requests.get(url, stream=True, timeout=60)
             resp.raise_for_status()
             total = int(resp.headers.get("content-length", 0))
-            tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".rar", dir=_WINE_TMP)
+            tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".rar")
             try:
                 received = 0
                 for chunk in resp.iter_content(chunk_size=65536):
@@ -142,141 +130,32 @@ class UpdateManager:
 
     def _extract_rar(self, rar_path: str) -> None:
         self.progress("Extracting...", 0.0)
-        tmp_dir = tempfile.mkdtemp(dir=_WINE_TMP)
+        tmp_dir = tempfile.mkdtemp()
         try:
             self._run_extractor(rar_path, tmp_dir)
             self._copy_files(tmp_dir)
         finally:
             shutil.rmtree(tmp_dir, ignore_errors=True)
 
-    # Shell script written to /tmp and executed natively on Linux, bypassing Wine subprocess
-    _LINUX_EXTRACT_SCRIPT = (
-        "#!/bin/sh\n"
-        "/usr/bin/7z x \"$1\" -o\"$2\" -y >/dev/null 2>&1 && exit 0\n"
-        "/usr/bin/7za x \"$1\" -o\"$2\" -y >/dev/null 2>&1 && exit 0\n"
-        "/usr/bin/unrar x -y \"$1\" \"$2/\" >/dev/null 2>&1 && exit 0\n"
-        "/usr/local/bin/7z x \"$1\" -o\"$2\" -y >/dev/null 2>&1 && exit 0\n"
-        "/usr/local/bin/unrar x -y \"$1\" \"$2/\" >/dev/null 2>&1 && exit 0\n"
-        "exit 1\n"
-    )
-
-    def _try_native_linux_helper(self, u_rar: str, u_dest: str) -> tuple:
-        """Write a shell script to /tmp and run it via libc.system() bypassing Wine entirely.
-        Returns (success: bool, diag_lines: list[str])."""
-        import ctypes
-        diag = []
-
-        # Load real Linux libc via dlopen path
-        libc = None
-        for lib_path in ("/usr/lib/libc.so.6", "/usr/lib64/libc.so.6",
-                         "/lib/x86_64-linux-gnu/libc.so.6", "/lib64/libc.so.6"):
-            try:
-                libc = ctypes.CDLL(lib_path)
-                diag.append(f"libc loaded  : {lib_path}")
-                break
-            except OSError as e:
-                diag.append(f"libc fail    : {lib_path} ({e})")
-
-        if libc is None:
-            diag.append("libc         : NOT LOADED - ctypes cannot load Linux libc under this Wine")
-            return False, diag
-
-        # Write extraction helper to /tmp via Z: path (Wine file I/O maps Z:\tmp -> /tmp)
-        wine_helper = "Z:\\tmp\\ge_launcher_extract.sh"
-        unix_helper = "/tmp/ge_launcher_extract.sh"
-        try:
-            with open(wine_helper, "w") as f:
-                f.write(self._LINUX_EXTRACT_SCRIPT)
-            diag.append(f"helper wrote : {unix_helper}")
-        except Exception as e:
-            diag.append(f"helper write : FAILED ({e})")
-            return False, diag
-
-        # chmod +x via libc.system so Linux shell can execute it
-        libc.system(f"chmod +x {unix_helper}".encode())
-
-        self.progress("Extracting archive...", 0.1)
-        cmd = f'/bin/sh "{unix_helper}" "{u_rar}" "{u_dest}"'
-        try:
-            ret = libc.system(cmd.encode())
-            diag.append(f"libc.system  : ret={ret}  cmd={cmd}")
-            return ret == 0, diag
-        except Exception as e:
-            diag.append(f"libc.system  : EXCEPTION ({e})")
-            return False, diag
-
-    def _try_pipe_extract(self, u_rar: str, u_dest: str) -> tuple:
-        """Use subprocess PIPE instead of DEVNULL - avoids WinError 6 Invalid Handle.
-        Returns (success: bool, diag_lines: list[str])."""
-        diag = []
-        candidates = [
-            ["/usr/bin/7z",    "x", u_rar, f"-o{u_dest}", "-y"],
-            ["/usr/bin/7za",   "x", u_rar, f"-o{u_dest}", "-y"],
-            ["/usr/bin/unrar", "x", "-y", u_rar, u_dest + "/"],
-        ]
-        for cmd in candidates:
-            try:
-                proc = subprocess.Popen(
-                    cmd,
-                    stdin=subprocess.PIPE,
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.PIPE,
-                )
-                proc.stdin.close()
-            except FileNotFoundError:
-                diag.append(f"PIPE NOT_FOUND : {cmd[0]}")
-                continue
-            except OSError as e:
-                diag.append(f"PIPE OS_ERROR  : {cmd[0]} ({e})")
-                continue
-            fake = 0.0
-            while proc.poll() is None:
-                time.sleep(0.4)
-                fake = min(fake + 0.008, 0.45)
-                self.progress("Extracting archive...", fake)
-            diag.append(f"PIPE EXIT({proc.returncode:3d}) : {cmd[0]}")
-            if proc.returncode == 0:
-                return True, diag
-        return False, diag
-
     def _run_extractor(self, rar_path: str, dest_dir: str) -> None:
-        if _WINE:
-            u_rar = _wine_to_unix(rar_path)
-            u_dest = _wine_to_unix(dest_dir)
+        if sys.platform.startswith("linux"):
+            candidates = [
+                ["/usr/bin/7z",    "x", rar_path, f"-o{dest_dir}", "-y"],
+                ["/usr/bin/7za",   "x", rar_path, f"-o{dest_dir}", "-y"],
+                ["/usr/bin/unrar", "x", "-y", rar_path, dest_dir + "/"],
+                ["/usr/local/bin/7z",    "x", rar_path, f"-o{dest_dir}", "-y"],
+                ["/usr/local/bin/unrar", "x", "-y", rar_path, dest_dir + "/"],
+                ["7z",    "x", rar_path, f"-o{dest_dir}", "-y"],
+                ["unrar", "x", "-y", rar_path, dest_dir + "/"],
+            ]
         else:
-            u_rar = rar_path
-            u_dest = dest_dir
+            candidates = [
+                [r"C:\Program Files\7-Zip\7z.exe",       "x", rar_path, f"-o{dest_dir}", "-y"],
+                [r"C:\Program Files (x86)\7-Zip\7z.exe", "x", rar_path, f"-o{dest_dir}", "-y"],
+                [r"C:\Program Files\WinRAR\UnRAR.exe",   "x", "-y", rar_path, dest_dir + os.sep],
+                [r"C:\Program Files\WinRAR\WinRAR.exe",  "x", "-y", rar_path, dest_dir + os.sep],
+            ]
 
-        diag_extra = []
-
-        if _WINE:
-            # 1. Write native Linux shell script + call via libc.system() - fully bypasses Wine
-            self.progress("Extracting archive...", 0.05)
-            ok, lines = self._try_native_linux_helper(u_rar, u_dest)
-            diag_extra.extend(lines)
-            if ok:
-                return
-
-            # 2. subprocess with PIPE (avoids WinError 6 caused by DEVNULL handle)
-            ok, lines = self._try_pipe_extract(u_rar, u_dest)
-            diag_extra.extend(lines)
-            if ok:
-                return
-
-        # 3. Standard subprocess with DEVNULL (works on native Linux/Windows)
-        candidates = [
-            ["/usr/bin/7z",    "x", u_rar, f"-o{u_dest}", "-y"],
-            ["/usr/bin/7za",   "x", u_rar, f"-o{u_dest}", "-y"],
-            ["/usr/bin/unrar", "x", "-y", u_rar, u_dest + "/"],
-            ["/usr/local/bin/7z",   "x", u_rar, f"-o{u_dest}", "-y"],
-            ["/usr/local/bin/unrar", "x", "-y", u_rar, u_dest + "/"],
-            ["7z",    "x", u_rar, f"-o{u_dest}", "-y"],
-            ["unrar", "x", "-y", u_rar, u_dest + "/"],
-            [r"C:\Program Files\7-Zip\7z.exe", "x", rar_path, f"-o{dest_dir}", "-y"],
-            [r"C:\Program Files (x86)\7-Zip\7z.exe", "x", rar_path, f"-o{dest_dir}", "-y"],
-            [r"C:\Program Files\WinRAR\UnRAR.exe", "x", "-y", rar_path, dest_dir + os.sep],
-            [r"C:\Program Files\WinRAR\WinRAR.exe", "x", "-y", rar_path, dest_dir + os.sep],
-        ]
         tried = []
         for cmd in candidates:
             try:
@@ -305,41 +184,32 @@ class UpdateManager:
         try:
             with open(diag_path, "w") as f:
                 f.write(f"sys.platform : {sys.platform}\n")
-                f.write(f"_WINE        : {_WINE}\n")
                 f.write(f"rar_path     : {rar_path}\n")
-                f.write(f"u_rar        : {u_rar}\n")
-                f.write(f"dest_dir     : {dest_dir}\n")
-                f.write(f"u_dest       : {u_dest}\n\n")
-                if diag_extra:
-                    f.write("Wine-specific attempts:\n")
-                    for line in diag_extra:
-                        f.write(f"  {line}\n")
-                    f.write("\n")
+                f.write(f"dest_dir     : {dest_dir}\n\n")
                 f.write("Candidates tried:\n")
                 for t in tried:
                     f.write(f"  {t}\n")
         except Exception:
             pass
 
-        if _WINE or sys.platform.startswith("linux"):
+        if sys.platform.startswith("linux"):
             raise UpdateError(
                 "No extraction tool found.\n"
-                "Diagnostic log written to ge_launcher_diag.txt\n"
-                "Install: sudo pacman -S 7zip unrar"
+                "Diagnostic log: ge_launcher_diag.txt\n"
+                "Install: sudo pacman -S 7zip unrar\n"
+                "  or:   sudo apt install p7zip-full unrar"
             )
         raise UpdateError(
             "No extraction tool found.\n"
-            "Diagnostic log written to ge_launcher_diag.txt\n"
+            "Diagnostic log: ge_launcher_diag.txt\n"
             "Install 7-Zip (7-zip.org) or WinRAR to enable updates."
         )
 
     def _copy_files(self, src_dir: str) -> None:
-        # Strip single top-level directory if present (e.g. GoldenEye-Recomp-Win/)
         entries = os.listdir(src_dir)
         if len(entries) == 1 and os.path.isdir(os.path.join(src_dir, entries[0])):
             src_dir = os.path.join(src_dir, entries[0])
 
-        # Count files to copy (excluding assets/)
         total = sum(
             len(files)
             for root, dirs, files in os.walk(src_dir)
@@ -467,14 +337,13 @@ class App(ctk.CTk):
         self.geometry("600x320")
 
         self._icon_img = ImageTk.PhotoImage(Image.open(get_asset_path("icon.png")))
-        # On Windows/Wine, CTK uses iconbitmap() with its own .ico; only iconbitmap() can override it
+        # On Windows, CTK overrides window icon; use iconbitmap() with .ico to override it back
         self._ico_path: Optional[str] = None
         if sys.platform == "win32":
             self._ico_path = os.path.join(tempfile.gettempdir(), "ge_launcher_icon.ico")
             Image.open(get_asset_path("icon.png")).save(
                 self._ico_path, format="ICO", sizes=[(16, 16), (32, 32), (48, 48), (64, 64)]
             )
-        # Apply after Map event so it fires after CTK finishes setting its icon
         self.bind("<Map>", self._apply_icon, add="+")
         self.resizable(False, False)
 
@@ -505,7 +374,6 @@ class App(ctk.CTk):
         self._banner_label = ctk.CTkLabel(self, image=self._banner_img, text="")
         self._banner_label.pack()
 
-        # Info button - top-right corner
         info_btn = ctk.CTkButton(
             self,
             text="ⓘ",
@@ -522,7 +390,6 @@ class App(ctk.CTk):
         )
         info_btn.place(x=548, y=7)
 
-        # Centered buttons
         btn_frame = ctk.CTkFrame(self, fg_color="transparent")
         btn_frame.pack(pady=16)
 
@@ -551,7 +418,20 @@ class App(ctk.CTk):
         if not os.path.exists(game_exe):
             self._show_error("GoldenEye.exe not found in launcher directory.")
             return
-        subprocess.Popen([game_exe], cwd=get_game_dir())
+        if sys.platform.startswith("linux"):
+            cmd = ["wine", game_exe]
+        else:
+            cmd = [game_exe]
+        try:
+            subprocess.Popen(cmd, cwd=get_game_dir())
+        except FileNotFoundError:
+            if sys.platform.startswith("linux"):
+                self._show_error(
+                    "wine not found.\n"
+                    "Install Wine, or launch via Bottles / Lutris / Heroic."
+                )
+                return
+            raise
         self._to_tray()
 
     def _start_update(self) -> None:
@@ -579,7 +459,6 @@ class App(ctk.CTk):
         container = ctk.CTkFrame(win, fg_color="transparent")
         container.pack(expand=True, fill="both", padx=20, pady=16)
 
-        # Circular icon graphic
         icon_wrap = ctk.CTkFrame(container, width=56, height=56, corner_radius=28,
                                   fg_color="#152a50", border_width=2, border_color="#4a7fc1")
         icon_wrap.pack(anchor="center", pady=(0, 6))
@@ -590,7 +469,6 @@ class App(ctk.CTk):
         ctk.CTkLabel(container, text="GoldenEye Launcher",
                      font=("Segoe UI", 12), text_color="#7a90b0").pack(anchor="center", pady=(0, 14))
 
-        # Row 1: Launcher by DarkXero  ·  GitHub ↗
         row1 = ctk.CTkFrame(container, fg_color="transparent")
         row1.pack(anchor="center", pady=(0, 7))
         ctk.CTkLabel(row1, text="Launcher by ", font=("Segoe UI", 12)).pack(side="left")
@@ -602,7 +480,6 @@ class App(ctk.CTk):
         lnk1.pack(side="left")
         lnk1.bind("<Button-1>", lambda e: webbrowser.open("https://github.com/DarkXero-dev/GELauncher"))
 
-        # Row 2: GoldenEye Recomp by SunJaycy  ·  GitHub ↗
         row2 = ctk.CTkFrame(container, fg_color="transparent")
         row2.pack(anchor="center")
         ctk.CTkLabel(row2, text="GoldenEye Recomp by ", font=("Segoe UI", 12)).pack(side="left")
@@ -619,7 +496,6 @@ class App(ctk.CTk):
         self._tray.show()
 
     def _restore(self) -> None:
-        # Called from pystray thread - dispatch tkinter ops to main thread
         self.after(0, self._do_restore)
 
     def _do_restore(self) -> None:
@@ -629,7 +505,6 @@ class App(ctk.CTk):
         self.focus_force()
 
     def _quit(self) -> None:
-        # Called from pystray thread - dispatch tkinter ops to main thread
         self.after(0, self._do_quit)
 
     def _do_quit(self) -> None:

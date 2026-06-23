@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
 
 jobs:
-  build:
+  build-windows:
     runs-on: windows-latest
     permissions:
       contents: write
@@ -22,7 +22,7 @@ jobs:
           python-version: "3.11"
 
       - name: Install dependencies
-        run: pip install -r requirements.txt
+        run: pip install -r requirements.txt pyinstaller
 
       - name: Build exe
         run: >
@@ -35,9 +35,11 @@ jobs:
           --add-data "icon.png;."
           launcher.py
 
-      - name: Upload exe to release
+      - name: Create release and upload exe
         if: startsWith(github.ref, 'refs/tags/')
-        run: gh release upload "${{ github.ref_name }}" "dist/GoldenEye Launcher.exe" --clobber
+        run: |
+          gh release create "${{ github.ref_name }}" --title "GoldenEye Launcher ${{ github.ref_name }}" --notes "" || true
+          gh release upload "${{ github.ref_name }}" "dist/GoldenEye Launcher.exe" --clobber
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
@@ -45,6 +47,86 @@ jobs:
         if: "!startsWith(github.ref, 'refs/tags/')"
         uses: actions/upload-artifact@v4
         with:
-          name: GoldenEye-Launcher
+          name: GoldenEye-Launcher-Windows
           path: "dist/GoldenEye Launcher.exe"
+          retention-days: 30
+
+  build-linux:
+    needs: build-windows
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install system deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            python3-tk \
+            libgirepository1.0-dev \
+            gir1.2-gtk-3.0 \
+            gir1.2-ayatanaappindicator3-0.1 \
+            libfuse2
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt pyinstaller
+
+      - name: Build Linux binary
+        run: >
+          pyinstaller
+          --onefile
+          --name "GoldenEye Launcher"
+          --add-data "banner.png:."
+          --add-data "icon.png:."
+          --hidden-import=tkinter
+          --hidden-import=_tkinter
+          launcher.py
+
+      - name: Build AppImage
+        run: |
+          mkdir -p AppDir/usr/bin
+          cp "dist/GoldenEye Launcher" "AppDir/usr/bin/GoldenEye Launcher"
+
+          cp icon.png "AppDir/GoldenEye Launcher.png"
+
+          cat > "AppDir/GoldenEye Launcher.desktop" << 'EOF'
+          [Desktop Entry]
+          Name=GoldenEye Launcher
+          Exec=GoldenEye Launcher
+          Icon=GoldenEye Launcher
+          Type=Application
+          Categories=Game;
+          EOF
+
+          cat > AppDir/AppRun << 'APPRUN'
+          #!/bin/sh
+          HERE="$(dirname "$(readlink -f "$0")")"
+          exec "$HERE/usr/bin/GoldenEye Launcher" "$@"
+          APPRUN
+          chmod +x AppDir/AppRun
+
+          wget -q "https://github.com/AppImage/AppImageKit/releases/download/continuous/appimagetool-x86_64.AppImage" -O appimagetool
+          chmod +x appimagetool
+          APPIMAGE_EXTRACT_AND_RUN=1 ARCH=x86_64 ./appimagetool AppDir "GoldenEye-Launcher.AppImage"
+
+      - name: Upload AppImage to release
+        if: startsWith(github.ref, 'refs/tags/')
+        run: gh release upload "${{ github.ref_name }}" "GoldenEye-Launcher.AppImage" --clobber
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Upload artifact (non-release builds)
+        if: "!startsWith(github.ref, 'refs/tags/')"
+        uses: actions/upload-artifact@v4
+        with:
+          name: GoldenEye-Launcher-Linux
+          path: "GoldenEye-Launcher.AppImage"
           retention-days: 30
