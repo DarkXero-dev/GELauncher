@@ -1,21 +1,30 @@
-Screentot_*
 __pycache__/
 *.pyc
 *.pyo
 *.pyd
-dist/
-build/
 *.spec
 .superpowers/
+.pytest_cache/
+Screentot_*
 
-# Local scripts - not part of launcher source
+# Build artifacts
+dist/
+build/
+AppDir/
+.venv/
+GoldenEye-Launcher.AppImage
+
+# Local scripts
 push.sh
 test_extract.py
 
-# Game files - not part of launcher source
+# Game files
 GoldenEye.exe
 ge.exe
 ge.toml
 *.dll
 assets/
 logs/
+version.txt
+ge_launcher_diag.txt
+docs/

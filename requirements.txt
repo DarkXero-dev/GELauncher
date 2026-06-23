@@ -1,5 +1,5 @@
 customtkinter==5.2.2
-Pillow==10.4.0
-requests==2.32.3
-pystray==0.19.5
-pyinstaller==6.10.0
+Pillow>=10.4.0
+requests>=2.32.3
+pystray>=0.19.5
+pyinstaller>=6.10.0

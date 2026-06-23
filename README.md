@@ -1,50 +1,64 @@
 # GoldenEye Recomp Launcher
 
-A portable Windows launcher/updater for [**GoldenEye Recomp**](https://github.com/SunJaycy/GoldenEye-Recomp).
+A portable launcher and updater for [**GoldenEye Recomp**](https://github.com/SunJaycy/GoldenEye-Recomp).
 
 <p align="center">
-
 <img alt="image" src="LauncherShot.png" />
-
 </p>
 
 ## Requirements
 
-- **[7-Zip](https://www.7-zip.org)** or **[WinRAR](https://www.rarlab.com)** must be installed to use the Update ReComp Engine feature.
+- **[7-Zip](https://www.7-zip.org)** or **[WinRAR](https://www.rarlab.com)** must be installed (Windows) to use the Update ReComp Engine feature.
+- On Linux, install `7zip` or `unrar` via your package manager.
 
 ## Installation
+
+### Windows
 
 1. Go to [**Releases**](https://github.com/DarkXero-dev/GELauncher/releases/latest) and download `GoldenEye Launcher.exe`
 2. Place it in your GoldenEye Recomp game folder (same folder as `GoldenEye.exe`)
 3. Run it - no install needed
 
+### Linux
+
+1. Go to [**Releases**](https://github.com/DarkXero-dev/GELauncher/releases/latest) and download `GoldenEye-Launcher.AppImage`
+2. Place it in your GoldenEye Recomp game folder (same folder as `GoldenEye.exe`)
+3. Make it executable and run:
+
+```bash
+chmod +x GoldenEye-Launcher.AppImage
+./GoldenEye-Launcher.AppImage
+```
+
+The launcher uses `wine` to launch `GoldenEye.exe`. Make sure Wine is installed on your system.
+
 ## Usage
 
 | Button | What it does |
 |---|---|
-| **Launch Game** | Starts GoldenEye Recomp and minimizes the launcher to the system tray |
+| **Launch Game** | Starts GoldenEye Recomp and minimizes the launcher to the taskbar |
 | **Update ReComp Engine** | Checks GitHub for the latest engine release, downloads and installs it automatically |
-
-To restore from the tray: double-click the tray icon, or right-click and choose **Restore**.
-To quit: right-click the tray icon and choose **Quit**.
 
 ---
 
-## Linux Notes
+## Building from Source
 
-The launcher runs on Linux via Wine. Use any of these compatibility layers:
+### Windows
 
-[**Wine**](https://www.winehq.org) &nbsp;·&nbsp; [**Lutris**](https://lutris.net) &nbsp;·&nbsp; [**Bottles**](https://usebottles.com) &nbsp;·&nbsp; [**Heroic**](https://heroicgameslauncher.com)
+```bat
+pip install -r requirements.txt
+build.bat
+```
 
-For the **Update ReComp Engine** feature, install `7zip`, `p7zip` or `unrar` on your system:
+Output: `dist\GoldenEye Launcher.exe`
+
+### Linux
+
+Requires Python 3 and `tk` (`sudo pacman -S tk` on Arch).
 
 ```bash
-# Arch / CachyOS / Manjaro
-sudo pacman -S 7zip
-
-# Ubuntu / Debian
-sudo apt install p7zip-full
-
-# Fedora
-sudo dnf install p7zip
+chmod +x build_linux.sh
+./build_linux.sh
 ```
+
+Output: `GoldenEye-Launcher.AppImage`
