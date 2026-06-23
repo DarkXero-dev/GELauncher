@@ -80,6 +80,13 @@ class TestUpdateManager(unittest.TestCase):
         self.assertTrue(os.path.exists(os.path.join(self.tmp, "rexruntimerd.dll")))
         self.assertFalse(os.path.exists(os.path.join(self.tmp, "GoldenEye-v1.0")))
 
+    def test_extract_zip_slip_prevented(self):
+        zip_path = os.path.join(self.tmp, "evil.zip")
+        with zipfile.ZipFile(zip_path, "w") as zf:
+            zf.writestr("../evil.exe", b"malicious content")
+        with self.assertRaises(UpdateError):
+            self.mgr._extract_zip(zip_path)
+
 
 if __name__ == "__main__":
     unittest.main()

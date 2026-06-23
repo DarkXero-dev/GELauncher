@@ -99,14 +99,21 @@ class UpdateManager:
             resp.raise_for_status()
             total = int(resp.headers.get("content-length", 0))
             tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".zip")
-            received = 0
-            for chunk in resp.iter_content(chunk_size=65536):
-                tmp.write(chunk)
-                received += len(chunk)
-                if total:
-                    self.progress(f"Downloading {tag}...", received / total)
-            tmp.close()
-            return tmp.name
+            try:
+                received = 0
+                for chunk in resp.iter_content(chunk_size=65536):
+                    tmp.write(chunk)
+                    received += len(chunk)
+                    if total:
+                        self.progress(f"Downloading {tag}...", received / total)
+                tmp.close()
+                return tmp.name
+            except Exception:
+                tmp.close()
+                os.unlink(tmp.name)
+                raise
+        except UpdateError:
+            raise
         except Exception as e:
             raise UpdateError(f"Download failed: {e}")
 
@@ -124,9 +131,15 @@ class UpdateManager:
 
             for i, member in enumerate(members):
                 if not member.endswith("/"):
+                    # Reject any member whose raw path contains a traversal component
+                    if ".." in member.replace("\\", "/").split("/"):
+                        raise UpdateError(f"Zip entry escapes target directory: {member}")
                     target = member[len(strip_prefix):] if strip_prefix and member.startswith(strip_prefix) else member
                     if target:
-                        dest = os.path.join(self.game_dir, target)
+                        dest = os.path.realpath(os.path.join(self.game_dir, target))
+                        game_dir_real = os.path.realpath(self.game_dir)
+                        if not dest.startswith(game_dir_real + os.sep) and dest != game_dir_real:
+                            raise UpdateError(f"Zip entry escapes target directory: {target}")
                         os.makedirs(os.path.dirname(dest), exist_ok=True)
                         with zf.open(member) as src, open(dest, "wb") as dst:
                             dst.write(src.read())
@@ -167,8 +180,9 @@ class TrayManager:
 # ---------------------------------------------------------------------------
 
 class ProgressModal:
-    def __init__(self, parent: ctk.CTk):
+    def __init__(self, parent: ctk.CTk, on_close: Optional[Callable[[], None]] = None):
         self._parent = parent
+        self._on_close = on_close
         self._win: Optional[ctk.CTkToplevel] = None
         self._status_label: Optional[ctk.CTkLabel] = None
         self._bar: Optional[ctk.CTkProgressBar] = None
@@ -190,20 +204,31 @@ class ProgressModal:
         self._bar.set(0)
         self._bar.pack(pady=(0, 20), padx=20)
 
+        self._parent._updating = True
         mgr = UpdateManager(get_game_dir(), self._on_progress)
         t = threading.Thread(target=self._run_thread, args=(mgr,), daemon=True)
         t.start()
 
     def _on_progress(self, status: str, fraction: float) -> None:
-        if self._win is None:
-            return
-        self._win.after(0, lambda: self._status_label.configure(text=status))
-        self._win.after(0, lambda: self._bar.set(fraction))
+        try:
+            if self._win is None or not self._win.winfo_exists():
+                return
+            self._win.after(0, lambda: self._status_label.configure(text=status))
+            self._win.after(0, lambda: self._bar.set(fraction))
+        except Exception:
+            pass
+
+    def _close_modal(self) -> None:
+        if self._on_close:
+            self._on_close()
+        if self._win is not None and self._win.winfo_exists():
+            self._win.destroy()
+        self._win = None
 
     def _run_thread(self, mgr: UpdateManager) -> None:
         try:
             mgr.check_and_update()
-            self._win.after(2000, self._win.destroy)
+            self._win.after(2000, self._close_modal)
         except UpdateError as e:
             err_msg = str(e)
             self._win.after(0, lambda: self._show_error(err_msg))
@@ -211,7 +236,7 @@ class ProgressModal:
     def _show_error(self, msg: str) -> None:
         self._status_label.configure(text=f"Error: {msg}")
         self._bar.configure(progress_color="red")
-        ctk.CTkButton(self._win, text="Close", command=self._win.destroy).pack(pady=8)
+        ctk.CTkButton(self._win, text="Close", command=self._close_modal).pack(pady=8)
 
 
 # ---------------------------------------------------------------------------
@@ -229,19 +254,21 @@ class App(ctk.CTk):
         self.resizable(False, False)
 
         self._tray = TrayManager(on_restore=self._restore, on_quit=self._quit)
+        self._active_modal: Optional[ProgressModal] = None
+        self._updating: bool = False
         self.protocol("WM_DELETE_WINDOW", self._do_quit)
 
         self._build_ui()
 
     def _build_ui(self) -> None:
         banner_path = get_asset_path("banner.png")
-        banner_img = ctk.CTkImage(
+        self._banner_img = ctk.CTkImage(
             light_image=Image.open(banner_path),
             dark_image=Image.open(banner_path),
             size=(600, 220),
         )
-        banner_label = ctk.CTkLabel(self, image=banner_img, text="")
-        banner_label.pack()
+        self._banner_label = ctk.CTkLabel(self, image=self._banner_img, text="")
+        self._banner_label.pack()
 
         btn_frame = ctk.CTkFrame(self, fg_color="transparent")
         btn_frame.pack(fill="x", padx=20, pady=12)
@@ -275,7 +302,14 @@ class App(ctk.CTk):
         self._to_tray()
 
     def _start_update(self) -> None:
-        ProgressModal(self).run_update()
+        if self._active_modal is not None:
+            return
+        self._active_modal = ProgressModal(self, on_close=self._on_modal_close)
+        self._active_modal.run_update()
+
+    def _on_modal_close(self) -> None:
+        self._updating = False
+        self._active_modal = None
 
     def _to_tray(self) -> None:
         self.withdraw()
@@ -296,6 +330,9 @@ class App(ctk.CTk):
         self.after(0, self._do_quit)
 
     def _do_quit(self) -> None:
+        if getattr(self, "_updating", False):
+            self._show_error("Update in progress. Please wait for it to complete.")
+            return
         self._tray.hide()
         self.destroy()
 
