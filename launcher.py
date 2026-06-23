@@ -336,10 +336,12 @@ class App(ctk.CTk):
         self.title("GoldenEye Recomp Launcher")
         self.geometry("600x320")
 
-        self._icon_img = ImageTk.PhotoImage(Image.open(get_asset_path("icon.png")))
         # On Windows, CTK overrides window icon; use iconbitmap() with .ico to override it back
+        # On Linux, tk.PhotoImage reads PNG natively (Tk 8.6+) - avoids PIL._tkinter_finder issue
+        self._icon_img = None
         self._ico_path: Optional[str] = None
         if sys.platform == "win32":
+            self._icon_img = ImageTk.PhotoImage(Image.open(get_asset_path("icon.png")))
             self._ico_path = os.path.join(tempfile.gettempdir(), "ge_launcher_icon.ico")
             Image.open(get_asset_path("icon.png")).save(
                 self._ico_path, format="ICO", sizes=[(16, 16), (32, 32), (48, 48), (64, 64)]
@@ -358,8 +360,13 @@ class App(ctk.CTk):
         try:
             if self._ico_path:
                 self.iconbitmap(self._ico_path)
-            else:
+            elif self._icon_img:
                 self.iconphoto(True, self._icon_img)
+            else:
+                import tkinter as tk
+                photo = tk.PhotoImage(file=get_asset_path("icon.png"))
+                self.iconphoto(True, photo)
+                self._icon_img = photo  # keep reference so GC doesn't collect it
         except Exception:
             pass
         self.unbind("<Map>")

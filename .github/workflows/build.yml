@@ -88,6 +88,8 @@ jobs:
           --add-data "icon.png:."
           --hidden-import=tkinter
           --hidden-import=_tkinter
+          --hidden-import=PIL._tkinter_finder
+          --collect-all=customtkinter
           launcher.py
 
       - name: Build AppImage
