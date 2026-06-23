@@ -10,6 +10,7 @@ build/
 
 # Local scripts - not part of launcher source
 push.sh
+test_extract.py
 
 # Game files - not part of launcher source
 GoldenEye.exe

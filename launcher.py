@@ -22,22 +22,14 @@ _WINE = sys.platform == "win32" and os.path.exists("/proc/version")
 
 
 def _wine_to_unix(path: str) -> str:
-    """Convert a Windows/Wine path to a Linux path for native tool invocation."""
-    for wp in ("/usr/bin/winepath", "/usr/local/bin/winepath"):
-        try:
-            r = subprocess.run(
-                [wp, "-u", path],
-                stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
-                stderr=subprocess.DEVNULL, timeout=5,
-            )
-            if r.returncode == 0:
-                return r.stdout.decode().strip()
-        except (FileNotFoundError, OSError):
-            continue
-    # Fallback: Wine maps Z: drive to /
+    """Convert a Z:-drive Wine path to a Unix path. Wine always maps Z: to /."""
     if len(path) >= 2 and path[0].upper() == "Z" and path[1] == ":":
         return path[2:].replace("\\", "/")
     return path
+
+
+# Temp dir forced to Z:\tmp under Wine so _wine_to_unix converts paths cleanly
+_WINE_TMP = "Z:\\tmp" if _WINE else None
 
 
 def get_game_dir() -> str:
@@ -129,7 +121,7 @@ class UpdateManager:
             resp = requests.get(url, stream=True, timeout=60)
             resp.raise_for_status()
             total = int(resp.headers.get("content-length", 0))
-            tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".rar")
+            tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".rar", dir=_WINE_TMP)
             try:
                 received = 0
                 for chunk in resp.iter_content(chunk_size=65536):
@@ -150,7 +142,7 @@ class UpdateManager:
 
     def _extract_rar(self, rar_path: str) -> None:
         self.progress("Extracting...", 0.0)
-        tmp_dir = tempfile.mkdtemp()
+        tmp_dir = tempfile.mkdtemp(dir=_WINE_TMP)
         try:
             self._run_extractor(rar_path, tmp_dir)
             self._copy_files(tmp_dir)
@@ -167,13 +159,17 @@ class UpdateManager:
             u_dest = dest_dir
 
         candidates = [
-            # Linux tools with Unix paths - tried first (works natively and under Wine)
-            ["/usr/bin/7z", "x", u_rar, f"-o{u_dest}", "-y"],
-            ["/usr/local/bin/7z", "x", u_rar, f"-o{u_dest}", "-y"],
+            # Linux explicit paths (works natively; under Wine, executes the Linux ELF directly)
+            ["/usr/bin/7zz",  "x", u_rar, f"-o{u_dest}", "-y"],   # Arch 7zip package
+            ["/usr/bin/7z",   "x", u_rar, f"-o{u_dest}", "-y"],
+            ["/usr/bin/7za",  "x", u_rar, f"-o{u_dest}", "-y"],
             ["/usr/bin/unrar", "x", "-y", u_rar, u_dest + "/"],
+            ["/usr/local/bin/7zz",  "x", u_rar, f"-o{u_dest}", "-y"],
+            ["/usr/local/bin/7z",   "x", u_rar, f"-o{u_dest}", "-y"],
             ["/usr/local/bin/unrar", "x", "-y", u_rar, u_dest + "/"],
-            # PATH-based with Unix paths (native Linux)
-            ["7z", "x", u_rar, f"-o{u_dest}", "-y"],
+            # PATH-based (native Linux only; Wine won't find these)
+            ["7zz",   "x", u_rar, f"-o{u_dest}", "-y"],
+            ["7z",    "x", u_rar, f"-o{u_dest}", "-y"],
             ["unrar", "x", "-y", u_rar, u_dest + "/"],
             # Windows-native tools inside Wine prefix
             [r"C:\Program Files\7-Zip\7z.exe", "x", rar_path, f"-o{dest_dir}", "-y"],
@@ -201,9 +197,9 @@ class UpdateManager:
         if _WINE or sys.platform.startswith("linux"):
             raise UpdateError(
                 "No extraction tool found.\n"
-                "Install p7zip or unrar:\n"
-                "  Arch/CachyOS:  sudo pacman -S p7zip\n"
-                "  Ubuntu/Debian: sudo apt install p7zip-full"
+                "Install 7zip or unrar:\n"
+                "  Arch/CachyOS:  sudo pacman -S 7zip unrar\n"
+                "  Ubuntu/Debian: sudo apt install 7zip unrar"
             )
         raise UpdateError(
             "No extraction tool found.\n"
