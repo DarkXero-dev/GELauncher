@@ -287,6 +287,8 @@ class ProgressModal:
         self._bar.set(0)
         self._bar.pack(pady=(0, 20), padx=20)
 
+        self._win.update()  # force render on Linux before thread starts
+
         self._parent._updating = True
         mgr = UpdateManager(get_game_dir(), self._on_progress)
         t = threading.Thread(target=self._run_thread, args=(mgr,), daemon=True)
