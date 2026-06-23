@@ -17,6 +17,29 @@ import pystray
 # Helpers
 # ---------------------------------------------------------------------------
 
+# True when Python is running inside Wine on Linux
+_WINE = sys.platform == "win32" and os.path.exists("/proc/version")
+
+
+def _wine_to_unix(path: str) -> str:
+    """Convert a Windows/Wine path to a Linux path for native tool invocation."""
+    for wp in ("/usr/bin/winepath", "/usr/local/bin/winepath"):
+        try:
+            r = subprocess.run(
+                [wp, "-u", path],
+                stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                stderr=subprocess.DEVNULL, timeout=5,
+            )
+            if r.returncode == 0:
+                return r.stdout.decode().strip()
+        except (FileNotFoundError, OSError):
+            continue
+    # Fallback: Wine maps Z: drive to /
+    if len(path) >= 2 and path[0].upper() == "Z" and path[1] == ":":
+        return path[2:].replace("\\", "/")
+    return path
+
+
 def get_game_dir() -> str:
     if getattr(sys, "frozen", False):
         return os.path.dirname(sys.executable)
@@ -135,21 +158,28 @@ class UpdateManager:
             shutil.rmtree(tmp_dir, ignore_errors=True)
 
     def _run_extractor(self, rar_path: str, dest_dir: str) -> None:
+        # Under Wine, Python paths are Windows-style; Linux tools need Unix paths
+        if _WINE:
+            u_rar = _wine_to_unix(rar_path)
+            u_dest = _wine_to_unix(dest_dir)
+        else:
+            u_rar = rar_path
+            u_dest = dest_dir
+
         candidates = [
-            # PATH-based (works on any OS)
-            ["7z", "x", rar_path, f"-o{dest_dir}", "-y"],
-            ["unrar", "x", "-y", rar_path, dest_dir + os.sep],
-            # Windows 7-Zip
+            # Linux tools with Unix paths - tried first (works natively and under Wine)
+            ["/usr/bin/7z", "x", u_rar, f"-o{u_dest}", "-y"],
+            ["/usr/local/bin/7z", "x", u_rar, f"-o{u_dest}", "-y"],
+            ["/usr/bin/unrar", "x", "-y", u_rar, u_dest + "/"],
+            ["/usr/local/bin/unrar", "x", "-y", u_rar, u_dest + "/"],
+            # PATH-based with Unix paths (native Linux)
+            ["7z", "x", u_rar, f"-o{u_dest}", "-y"],
+            ["unrar", "x", "-y", u_rar, u_dest + "/"],
+            # Windows-native tools inside Wine prefix
             [r"C:\Program Files\7-Zip\7z.exe", "x", rar_path, f"-o{dest_dir}", "-y"],
             [r"C:\Program Files (x86)\7-Zip\7z.exe", "x", rar_path, f"-o{dest_dir}", "-y"],
-            # Windows WinRAR
             [r"C:\Program Files\WinRAR\UnRAR.exe", "x", "-y", rar_path, dest_dir + os.sep],
             [r"C:\Program Files\WinRAR\WinRAR.exe", "x", "-y", rar_path, dest_dir + os.sep],
-            # Linux explicit paths
-            ["/usr/bin/7z", "x", rar_path, f"-o{dest_dir}", "-y"],
-            ["/usr/local/bin/7z", "x", rar_path, f"-o{dest_dir}", "-y"],
-            ["/usr/bin/unrar", "x", "-y", rar_path, dest_dir + os.sep],
-            ["/usr/local/bin/unrar", "x", "-y", rar_path, dest_dir + os.sep],
         ]
         for cmd in candidates:
             try:
@@ -161,7 +191,6 @@ class UpdateManager:
                 )
             except (FileNotFoundError, OSError):
                 continue
-            # Poll so the thread stays live and progress animates
             fake = 0.0
             while proc.poll() is None:
                 time.sleep(0.4)
@@ -169,11 +198,11 @@ class UpdateManager:
                 self.progress("Extracting archive...", fake)
             if proc.returncode == 0:
                 return
-        if sys.platform.startswith("linux"):
+        if _WINE or sys.platform.startswith("linux"):
             raise UpdateError(
                 "No extraction tool found.\n"
                 "Install p7zip or unrar:\n"
-                "  Arch:          sudo pacman -S p7zip\n"
+                "  Arch/CachyOS:  sudo pacman -S p7zip\n"
                 "  Ubuntu/Debian: sudo apt install p7zip-full"
             )
         raise UpdateError(
@@ -312,10 +341,17 @@ class App(ctk.CTk):
         ctk.set_default_color_theme("dark-blue")
 
         self.title("GoldenEye Recomp Launcher")
-        self._icon_img = ImageTk.PhotoImage(Image.open(get_asset_path("icon.png")))
         self.geometry("600x320")
-        self.iconphoto(True, self._icon_img)
-        # Re-apply after window is mapped to beat any WM/CTK icon reset
+
+        self._icon_img = ImageTk.PhotoImage(Image.open(get_asset_path("icon.png")))
+        # On Windows/Wine, CTK uses iconbitmap() with its own .ico; only iconbitmap() can override it
+        self._ico_path: Optional[str] = None
+        if sys.platform == "win32":
+            self._ico_path = os.path.join(tempfile.gettempdir(), "ge_launcher_icon.ico")
+            Image.open(get_asset_path("icon.png")).save(
+                self._ico_path, format="ICO", sizes=[(16, 16), (32, 32), (48, 48), (64, 64)]
+            )
+        # Apply after Map event so it fires after CTK finishes setting its icon
         self.bind("<Map>", self._apply_icon, add="+")
         self.resizable(False, False)
 
@@ -327,7 +363,13 @@ class App(ctk.CTk):
         self._build_ui()
 
     def _apply_icon(self, event=None) -> None:
-        self.iconphoto(True, self._icon_img)
+        try:
+            if self._ico_path:
+                self.iconbitmap(self._ico_path)
+            else:
+                self.iconphoto(True, self._icon_img)
+        except Exception:
+            pass
         self.unbind("<Map>")
 
     def _build_ui(self) -> None:
