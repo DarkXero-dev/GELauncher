@@ -4,7 +4,7 @@ A portable Windows launcher/updater for [**GoldenEye Recomp**](https://github.co
 
 <p align="center">
 
-![Launcher](screenshot.png)
+<img alt="image" src="screenshot.png" />
 
 </p>
 
