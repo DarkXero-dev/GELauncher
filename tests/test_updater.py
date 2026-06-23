@@ -87,6 +87,16 @@ class TestUpdateManager(unittest.TestCase):
         with self.assertRaises(UpdateError):
             self.mgr._extract_zip(zip_path)
 
+    def test_extract_zip_skips_assets_folder(self):
+        zip_path = os.path.join(self.tmp, "test.zip")
+        with zipfile.ZipFile(zip_path, "w") as zf:
+            zf.writestr("GoldenEye-v1.0/GoldenEye.exe", b"new exe")
+            zf.writestr("GoldenEye-v1.0/assets/music.xwb", b"game music")
+            zf.writestr("GoldenEye-v1.0/assets/sfx.xwb", b"game sfx")
+        self.mgr._extract_zip(zip_path)
+        self.assertTrue(os.path.exists(os.path.join(self.tmp, "GoldenEye.exe")))
+        self.assertFalse(os.path.exists(os.path.join(self.tmp, "assets")))
+
 
 if __name__ == "__main__":
     unittest.main()

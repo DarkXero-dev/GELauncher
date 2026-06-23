@@ -135,7 +135,7 @@ class UpdateManager:
                     if ".." in member.replace("\\", "/").split("/"):
                         raise UpdateError(f"Zip entry escapes target directory: {member}")
                     target = member[len(strip_prefix):] if strip_prefix and member.startswith(strip_prefix) else member
-                    if target:
+                    if target and not (target == "assets" or target.startswith("assets/")):
                         dest = os.path.realpath(os.path.join(self.game_dir, target))
                         game_dir_real = os.path.realpath(self.game_dir)
                         if not dest.startswith(game_dir_real + os.sep) and dest != game_dir_real:
