@@ -329,18 +329,18 @@ class App(ctk.CTk):
         info_btn = ctk.CTkButton(
             self,
             text="ⓘ",
-            width=34,
-            height=34,
-            corner_radius=17,
-            font=("Segoe UI", 15),
-            fg_color="transparent",
-            hover_color="#252540",
-            text_color="#6677aa",
+            width=32,
+            height=32,
+            corner_radius=16,
+            font=("Segoe UI", 14, "bold"),
+            fg_color="#12100a",
+            hover_color="#1f1a08",
+            text_color="#c8921a",
             border_width=1,
-            border_color="#3a3a5a",
+            border_color="#7a5810",
             command=self._show_about,
         )
-        info_btn.place(x=558, y=6)
+        info_btn.place(x=560, y=7)
 
         # Centered buttons
         btn_frame = ctk.CTkFrame(self, fg_color="transparent")
