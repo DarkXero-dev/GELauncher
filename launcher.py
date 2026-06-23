@@ -150,22 +150,31 @@ class UpdateManager:
             shutil.rmtree(tmp_dir, ignore_errors=True)
 
     def _try_libc_extract(self, u_rar: str, u_dest: str) -> bool:
-        """Wine-only: call Linux libc.system() directly, bypassing Wine CreateProcess."""
-        try:
-            import ctypes, ctypes.util
-            libc = ctypes.CDLL(ctypes.util.find_library("c") or "libc.so.6")
-        except Exception:
+        """Wine-only: call Linux libc.system() directly, bypassing Wine CreateProcess.
+        Uses full binary paths so Linux PATH is not required."""
+        import ctypes
+        libc = None
+        for path in ("/usr/lib/libc.so.6", "/usr/lib64/libc.so.6",
+                     "/lib/x86_64-linux-gnu/libc.so.6", "/lib64/libc.so.6"):
+            try:
+                libc = ctypes.CDLL(path)
+                break
+            except OSError:
+                continue
+        if libc is None:
             return False
         cmds = [
-            f'7zz x "{u_rar}" -o"{u_dest}" -y 2>/dev/null',
-            f'7z  x "{u_rar}" -o"{u_dest}" -y 2>/dev/null',
-            f'unrar x -y "{u_rar}" "{u_dest}/" 2>/dev/null',
+            f'/usr/bin/7z   x "{u_rar}" -o"{u_dest}" -y 2>/dev/null',
+            f'/usr/bin/7za  x "{u_rar}" -o"{u_dest}" -y 2>/dev/null',
+            f'/usr/bin/7zz  x "{u_rar}" -o"{u_dest}" -y 2>/dev/null',
+            f'/usr/bin/unrar x -y "{u_rar}" "{u_dest}/" 2>/dev/null',
+            f'/usr/local/bin/7z   x "{u_rar}" -o"{u_dest}" -y 2>/dev/null',
+            f'/usr/local/bin/unrar x -y "{u_rar}" "{u_dest}/" 2>/dev/null',
         ]
         for cmd in cmds:
             self.progress("Extracting archive...", 0.1)
             try:
-                ret = libc.system(cmd.encode())
-                if ret == 0:
+                if libc.system(cmd.encode()) == 0:
                     return True
             except Exception:
                 continue
