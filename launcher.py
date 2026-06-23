@@ -8,6 +8,7 @@ import requests
 import customtkinter as ctk
 from PIL import Image, ImageTk
 from typing import Callable, Optional
+import webbrowser
 import pystray
 
 
@@ -304,8 +305,25 @@ class App(ctk.CTk):
         self._banner_label = ctk.CTkLabel(self, image=self._banner_img, text="")
         self._banner_label.pack()
 
+        # Info button - top-right corner over banner
+        info_btn = ctk.CTkButton(
+            self,
+            text="ⓘ",
+            width=30,
+            height=30,
+            corner_radius=15,
+            font=("Segoe UI", 14),
+            fg_color="#1a1a2e",
+            hover_color="#2a2a4e",
+            border_width=1,
+            border_color="#4a4a6e",
+            command=self._show_about,
+        )
+        info_btn.place(x=562, y=8)
+
+        # Centered buttons
         btn_frame = ctk.CTkFrame(self, fg_color="transparent")
-        btn_frame.pack(fill="x", padx=20, pady=12)
+        btn_frame.pack(pady=12)
 
         ctk.CTkButton(
             btn_frame,
@@ -344,6 +362,42 @@ class App(ctk.CTk):
     def _on_modal_close(self) -> None:
         self._updating = False
         self._active_modal = None
+
+    def _show_about(self) -> None:
+        win = ctk.CTkToplevel(self)
+        win.title("About")
+        win.geometry("380x140")
+        win.resizable(False, False)
+        win.grab_set()
+        win.focus_force()
+        self.update_idletasks()
+        px = self.winfo_x() + (self.winfo_width() - 380) // 2
+        py = self.winfo_y() + (self.winfo_height() - 140) // 2
+        win.geometry(f"380x140+{px}+{py}")
+
+        container = ctk.CTkFrame(win, fg_color="transparent")
+        container.pack(expand=True, fill="both", padx=24, pady=20)
+
+        # Row 1: Launcher by DarkXero : Github
+        row1 = ctk.CTkFrame(container, fg_color="transparent")
+        row1.pack(anchor="center", pady=(0, 10))
+        ctk.CTkLabel(row1, text="Launcher by ", font=("Segoe UI", 13)).pack(side="left")
+        ctk.CTkLabel(row1, text="DarkXero", font=("Segoe UI", 13, "bold")).pack(side="left")
+        ctk.CTkLabel(row1, text="  :  ", font=("Segoe UI", 13)).pack(side="left")
+        lnk1 = ctk.CTkLabel(row1, text="Github", font=("Segoe UI", 13),
+                             text_color="#5ba3e0", cursor="hand2")
+        lnk1.pack(side="left")
+        lnk1.bind("<Button-1>", lambda e: webbrowser.open("https://github.com/DarkXero-dev/GELauncher"))
+
+        # Row 2: GoldenEye Recomp by SunJaycy
+        row2 = ctk.CTkFrame(container, fg_color="transparent")
+        row2.pack(anchor="center")
+        lnk2 = ctk.CTkLabel(row2, text="GoldenEye Recomp", font=("Segoe UI", 13),
+                             text_color="#5ba3e0", cursor="hand2")
+        lnk2.pack(side="left")
+        lnk2.bind("<Button-1>", lambda e: webbrowser.open("https://github.com/SunJaycy/GoldenEye-Recomp"))
+        ctk.CTkLabel(row2, text=" by ", font=("Segoe UI", 13)).pack(side="left")
+        ctk.CTkLabel(row2, text="SunJaycy", font=("Segoe UI", 13, "bold")).pack(side="left")
 
     def _to_tray(self) -> None:
         self.withdraw()
