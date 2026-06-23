@@ -275,11 +275,10 @@ class ProgressModal:
 
     def run_update(self) -> None:
         self._win = ctk.CTkToplevel(self._parent)
+        self._win.withdraw()  # hide while building to avoid blank flash
         self._win.title("Updating ReComp Engine")
         self._win.geometry("420x140")
         self._win.resizable(False, False)
-        self._win.grab_set()
-        self._win.focus_force()
 
         self._status_label = ctk.CTkLabel(
             self._win, text="Starting...", font=("Segoe UI", 13)
@@ -290,7 +289,10 @@ class ProgressModal:
         self._bar.set(0)
         self._bar.pack(pady=(0, 20), padx=20)
 
-        self._win.update()  # force render on Linux before thread starts
+        self._win.update_idletasks()
+        self._win.deiconify()  # show only after widgets are laid out
+        self._win.grab_set()
+        self._win.focus_force()
 
         self._parent._updating = True
         mgr = UpdateManager(get_game_dir(), self._on_progress)
@@ -458,11 +460,10 @@ class App(ctk.CTk):
 
     def _show_about(self) -> None:
         win = ctk.CTkToplevel(self)
+        win.withdraw()  # hide while building
         win.title("About")
         win.geometry("390x210")
         win.resizable(False, False)
-        win.grab_set()
-        win.focus_force()
         self.update_idletasks()
         px = self.winfo_x() + (self.winfo_width() - 390) // 2
         py = self.winfo_y() + (self.winfo_height() - 210) // 2
@@ -503,12 +504,14 @@ class App(ctk.CTk):
         lnk2.pack(side="left")
         lnk2.bind("<Button-1>", lambda e: webbrowser.open("https://github.com/SunJaycy/GoldenEye-Recomp"))
 
+        win.update_idletasks()
+        win.deiconify()  # show only after all widgets are built
+        win.grab_set()
+        win.focus_force()
+
     def _to_tray(self) -> None:
         if sys.platform.startswith("linux"):
-            # On Linux, tray support is DE/compositor-dependent - minimize to taskbar instead
-            # so the window is always recoverable. Still attempt tray icon as bonus.
-            self.iconify()
-            self._tray.show()
+            self.iconify()  # minimize to dock, no tray on Linux
         else:
             self.withdraw()
             self._tray.show()
