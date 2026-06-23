@@ -7,6 +7,9 @@ build/
 *.spec
 .superpowers/
 
+# Local scripts - not part of launcher source
+push.sh
+
 # Game files - not part of launcher source
 GoldenEye.exe
 ge.exe
