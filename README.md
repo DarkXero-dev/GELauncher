@@ -1,12 +1,20 @@
 # GoldenEye Recomp Launcher
 
-A portable Windows launcher for [GoldenEye Recomp](https://github.com/SunJaycy/GoldenEye-Recomp). Launch the game and keep the engine up to date from one place.
+A portable Windows launcher/updater for [**GoldenEye Recomp**](https://github.com/SunJaycy/GoldenEye-Recomp).
+
+<p align="center">
 
 ![Launcher](screenshot.png)
 
+</p>
+
+## Requirements
+
+- **[7-Zip](https://www.7-zip.org)** or **[WinRAR](https://www.rarlab.com)** must be installed to use the Update ReComp Engine feature.
+
 ## Installation
 
-1. Go to [Releases](https://github.com/DarkXero-dev/GELauncher/releases/latest) and download `GoldenEye Launcher.exe`
+1. Go to [**Releases**](https://github.com/DarkXero-dev/GELauncher/releases/latest) and download `GoldenEye Launcher.exe`
 2. Place it in your GoldenEye Recomp game folder (same folder as `GoldenEye.exe`)
 3. Run it - no install needed
 
@@ -19,7 +27,3 @@ A portable Windows launcher for [GoldenEye Recomp](https://github.com/SunJaycy/G
 
 To restore from the tray: double-click the tray icon, or right-click and choose **Restore**.
 To quit: right-click the tray icon and choose **Quit**.
-
-## Requirements
-
-- **[7-Zip](https://www.7-zip.org)** or **[WinRAR](https://www.rarlab.com)** must be installed to use the Update ReComp Engine feature.
