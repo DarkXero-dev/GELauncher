@@ -1,6 +1,6 @@
 import os
 import sys
-import zipfile
+import shutil
 import threading
 import subprocess
 import tempfile
@@ -57,10 +57,13 @@ class UpdateManager:
             self.progress("Already up to date.", 1.0)
             return
 
-        zip_url = self._find_zip_url(release["assets"])
-        zip_path = self._download(zip_url, remote_tag)
-        self._extract_zip(zip_path)
-        os.remove(zip_path)
+        rar_url = self._find_rar_url(release["assets"])
+        rar_path = self._download(rar_url, remote_tag)
+        try:
+            self._extract_rar(rar_path)
+        finally:
+            if os.path.exists(rar_path):
+                os.remove(rar_path)
         self._write_version(remote_tag)
         self.progress("Update complete!", 1.0)
 
@@ -86,11 +89,14 @@ class UpdateManager:
         with open(os.path.join(self.game_dir, "version.txt"), "w") as f:
             f.write(tag)
 
-    def _find_zip_url(self, assets: list) -> str:
+    def _find_rar_url(self, assets: list) -> str:
         for asset in assets:
-            if asset["name"].endswith(".zip"):
+            if asset["name"] == "GoldenEye-Recomp-Win.rar":
                 return asset["browser_download_url"]
-        raise UpdateError("No .zip asset found in release.")
+        for asset in assets:
+            if asset["name"].endswith(".rar"):
+                return asset["browser_download_url"]
+        raise UpdateError("No RAR asset found in release.")
 
     def _download(self, url: str, tag: str) -> str:
         self.progress(f"Downloading {tag}...", 0.0)
@@ -98,7 +104,7 @@ class UpdateManager:
             resp = requests.get(url, stream=True, timeout=60)
             resp.raise_for_status()
             total = int(resp.headers.get("content-length", 0))
-            tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".zip")
+            tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".rar")
             try:
                 received = 0
                 for chunk in resp.iter_content(chunk_size=65536):
@@ -117,33 +123,59 @@ class UpdateManager:
         except Exception as e:
             raise UpdateError(f"Download failed: {e}")
 
-    def _extract_zip(self, zip_path: str) -> None:
+    def _extract_rar(self, rar_path: str) -> None:
         self.progress("Extracting...", 0.0)
-        with zipfile.ZipFile(zip_path) as zf:
-            members = zf.namelist()
-            # Detect and strip common top-level directory (e.g. GoldenEye-v1.0/)
-            top_dirs = {m.split("/")[0] for m in members if "/" in m}
-            has_single_root = (
-                len(top_dirs) == 1
-                and all(m.startswith(list(top_dirs)[0] + "/") for m in members if m)
-            )
-            strip_prefix = (list(top_dirs)[0] + "/") if has_single_root else ""
+        tmp_dir = tempfile.mkdtemp()
+        try:
+            self._run_extractor(rar_path, tmp_dir)
+            self._copy_files(tmp_dir)
+        finally:
+            shutil.rmtree(tmp_dir, ignore_errors=True)
 
-            for i, member in enumerate(members):
-                if not member.endswith("/"):
-                    # Reject any member whose raw path contains a traversal component
-                    if ".." in member.replace("\\", "/").split("/"):
-                        raise UpdateError(f"Zip entry escapes target directory: {member}")
-                    target = member[len(strip_prefix):] if strip_prefix and member.startswith(strip_prefix) else member
-                    if target and not (target == "assets" or target.startswith("assets/")):
-                        dest = os.path.realpath(os.path.join(self.game_dir, target))
-                        game_dir_real = os.path.realpath(self.game_dir)
-                        if not dest.startswith(game_dir_real + os.sep) and dest != game_dir_real:
-                            raise UpdateError(f"Zip entry escapes target directory: {target}")
-                        os.makedirs(os.path.dirname(dest), exist_ok=True)
-                        with zf.open(member) as src, open(dest, "wb") as dst:
-                            dst.write(src.read())
-                self.progress("Extracting...", (i + 1) / len(members))
+    def _run_extractor(self, rar_path: str, dest_dir: str) -> None:
+        candidates = [
+            ["7z", "x", rar_path, f"-o{dest_dir}", "-y"],
+            [r"C:\Program Files\7-Zip\7z.exe", "x", rar_path, f"-o{dest_dir}", "-y"],
+            [r"C:\Program Files (x86)\7-Zip\7z.exe", "x", rar_path, f"-o{dest_dir}", "-y"],
+            ["unrar", "x", "-y", rar_path, dest_dir + os.sep],
+            [r"C:\Program Files\WinRAR\UnRAR.exe", "x", "-y", rar_path, dest_dir + os.sep],
+            [r"C:\Program Files\WinRAR\WinRAR.exe", "x", "-y", rar_path, dest_dir + os.sep],
+        ]
+        for cmd in candidates:
+            try:
+                result = subprocess.run(cmd, capture_output=True, timeout=300)
+                if result.returncode == 0:
+                    return
+            except FileNotFoundError:
+                continue
+        raise UpdateError(
+            "No extraction tool found. Install 7-Zip (7-zip.org) or WinRAR to enable updates."
+        )
+
+    def _copy_files(self, src_dir: str) -> None:
+        # Strip single top-level directory if present (e.g. GoldenEye-Recomp-Win/)
+        entries = os.listdir(src_dir)
+        if len(entries) == 1 and os.path.isdir(os.path.join(src_dir, entries[0])):
+            src_dir = os.path.join(src_dir, entries[0])
+
+        # Count files to copy (excluding assets/)
+        total = sum(
+            len(files)
+            for root, dirs, files in os.walk(src_dir)
+            if os.path.relpath(root, src_dir).split(os.sep)[0].lower() != "assets"
+        )
+
+        copied = 0
+        for root, dirs, files in os.walk(src_dir):
+            dirs[:] = [d for d in dirs if d.lower() != "assets"]
+            for fname in files:
+                src = os.path.join(root, fname)
+                rel = os.path.relpath(src, src_dir)
+                dest = os.path.join(self.game_dir, rel)
+                os.makedirs(os.path.dirname(dest), exist_ok=True)
+                shutil.copy2(src, dest)
+                copied += 1
+                self.progress("Extracting...", copied / max(total, 1))
 
 
 # ---------------------------------------------------------------------------

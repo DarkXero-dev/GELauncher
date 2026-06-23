@@ -1,6 +1,6 @@
 import os
 import sys
-import zipfile
+import shutil
 import tempfile
 import unittest
 from unittest.mock import patch, MagicMock
@@ -15,6 +15,9 @@ class TestUpdateManager(unittest.TestCase):
         self.tmp = tempfile.mkdtemp()
         self.events = []
         self.mgr = UpdateManager(self.tmp, lambda s, f: self.events.append((s, f)))
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp, ignore_errors=True)
 
     # --- version helpers ---
 
@@ -44,58 +47,80 @@ class TestUpdateManager(unittest.TestCase):
 
     # --- asset finder ---
 
-    def test_find_zip_asset(self):
+    def test_find_rar_asset_by_exact_name(self):
         assets = [
             {"name": "README.txt", "browser_download_url": "http://example.com/readme"},
-            {"name": "release.zip", "browser_download_url": "http://example.com/release.zip"},
+            {"name": "GoldenEye-Recomp-Win.rar", "browser_download_url": "http://example.com/GoldenEye-Recomp-Win.rar"},
         ]
         self.assertEqual(
-            self.mgr._find_zip_url(assets),
-            "http://example.com/release.zip"
+            self.mgr._find_rar_url(assets),
+            "http://example.com/GoldenEye-Recomp-Win.rar"
         )
 
-    def test_find_zip_asset_missing_raises(self):
+    def test_find_rar_asset_fallback_any_rar(self):
+        assets = [
+            {"name": "README.txt", "browser_download_url": "http://example.com/readme"},
+            {"name": "other-release.rar", "browser_download_url": "http://example.com/other.rar"},
+        ]
+        self.assertEqual(
+            self.mgr._find_rar_url(assets),
+            "http://example.com/other.rar"
+        )
+
+    def test_find_rar_asset_missing_raises(self):
         assets = [{"name": "README.txt", "browser_download_url": "http://example.com/readme"}]
         with self.assertRaises(UpdateError):
-            self.mgr._find_zip_url(assets)
+            self.mgr._find_rar_url(assets)
 
-    # --- extract ---
+    # --- _copy_files ---
 
-    def test_extract_flat_zip(self):
-        zip_path = os.path.join(self.tmp, "test.zip")
-        with zipfile.ZipFile(zip_path, "w") as zf:
-            zf.writestr("GoldenEye.exe", b"fake exe")
-            zf.writestr("rexruntimerd.dll", b"fake dll")
-        self.mgr._extract_zip(zip_path)
+    def _make_src(self, files: dict) -> str:
+        src = tempfile.mkdtemp()
+        for rel_path, content in files.items():
+            full = os.path.join(src, rel_path)
+            os.makedirs(os.path.dirname(full), exist_ok=True)
+            with open(full, "w") as f:
+                f.write(content)
+        return src
+
+    def test_copy_files_flat(self):
+        src = self._make_src({"GoldenEye.exe": "exe", "rexruntimerd.dll": "dll"})
+        self.mgr._copy_files(src)
+        shutil.rmtree(src)
         self.assertTrue(os.path.exists(os.path.join(self.tmp, "GoldenEye.exe")))
         self.assertTrue(os.path.exists(os.path.join(self.tmp, "rexruntimerd.dll")))
 
-    def test_extract_zip_strips_top_level_dir(self):
-        zip_path = os.path.join(self.tmp, "test.zip")
-        with zipfile.ZipFile(zip_path, "w") as zf:
-            zf.writestr("GoldenEye-v1.0/GoldenEye.exe", b"fake exe")
-            zf.writestr("GoldenEye-v1.0/rexruntimerd.dll", b"fake dll")
-        self.mgr._extract_zip(zip_path)
+    def test_copy_files_strips_top_level_dir(self):
+        src = self._make_src({
+            os.path.join("GoldenEye-v1.0", "GoldenEye.exe"): "exe",
+            os.path.join("GoldenEye-v1.0", "rexruntimerd.dll"): "dll",
+        })
+        self.mgr._copy_files(src)
+        shutil.rmtree(src)
         self.assertTrue(os.path.exists(os.path.join(self.tmp, "GoldenEye.exe")))
-        self.assertTrue(os.path.exists(os.path.join(self.tmp, "rexruntimerd.dll")))
         self.assertFalse(os.path.exists(os.path.join(self.tmp, "GoldenEye-v1.0")))
 
-    def test_extract_zip_slip_prevented(self):
-        zip_path = os.path.join(self.tmp, "evil.zip")
-        with zipfile.ZipFile(zip_path, "w") as zf:
-            zf.writestr("../evil.exe", b"malicious content")
-        with self.assertRaises(UpdateError):
-            self.mgr._extract_zip(zip_path)
-
-    def test_extract_zip_skips_assets_folder(self):
-        zip_path = os.path.join(self.tmp, "test.zip")
-        with zipfile.ZipFile(zip_path, "w") as zf:
-            zf.writestr("GoldenEye-v1.0/GoldenEye.exe", b"new exe")
-            zf.writestr("GoldenEye-v1.0/assets/music.xwb", b"game music")
-            zf.writestr("GoldenEye-v1.0/assets/sfx.xwb", b"game sfx")
-        self.mgr._extract_zip(zip_path)
+    def test_copy_files_skips_assets(self):
+        src = self._make_src({
+            os.path.join("GoldenEye-v1.0", "GoldenEye.exe"): "exe",
+            os.path.join("GoldenEye-v1.0", "assets", "music.xwb"): "music",
+            os.path.join("GoldenEye-v1.0", "assets", "sfx.xwb"): "sfx",
+        })
+        self.mgr._copy_files(src)
+        shutil.rmtree(src)
         self.assertTrue(os.path.exists(os.path.join(self.tmp, "GoldenEye.exe")))
         self.assertFalse(os.path.exists(os.path.join(self.tmp, "assets")))
+
+    def test_copy_files_progress_reported(self):
+        src = self._make_src({
+            os.path.join("GoldenEye-v1.0", "GoldenEye.exe"): "exe",
+            os.path.join("GoldenEye-v1.0", "rexruntimerd.dll"): "dll",
+        })
+        self.mgr._copy_files(src)
+        shutil.rmtree(src)
+        fractions = [f for _, f in self.events if _ == "Extracting..."]
+        self.assertTrue(len(fractions) > 0)
+        self.assertEqual(fractions[-1], 1.0)
 
 
 if __name__ == "__main__":
