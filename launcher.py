@@ -177,6 +177,7 @@ class UpdateManager:
             [r"C:\Program Files\WinRAR\UnRAR.exe", "x", "-y", rar_path, dest_dir + os.sep],
             [r"C:\Program Files\WinRAR\WinRAR.exe", "x", "-y", rar_path, dest_dir + os.sep],
         ]
+        tried = []
         for cmd in candidates:
             try:
                 proc = subprocess.Popen(
@@ -185,7 +186,11 @@ class UpdateManager:
                     stdout=subprocess.DEVNULL,
                     stderr=subprocess.DEVNULL,
                 )
-            except (FileNotFoundError, OSError):
+            except FileNotFoundError:
+                tried.append(f"NOT_FOUND : {cmd[0]}")
+                continue
+            except OSError as e:
+                tried.append(f"OS_ERROR  : {cmd[0]} ({e})")
                 continue
             fake = 0.0
             while proc.poll() is None:
@@ -194,15 +199,33 @@ class UpdateManager:
                 self.progress("Extracting archive...", fake)
             if proc.returncode == 0:
                 return
+            tried.append(f"EXIT({proc.returncode:3d}) : {cmd[0]}")
+
+        # Write diagnostic log next to the launcher so the user can inspect it
+        diag_path = os.path.join(self.game_dir, "ge_launcher_diag.txt")
+        try:
+            with open(diag_path, "w") as f:
+                f.write(f"sys.platform : {sys.platform}\n")
+                f.write(f"_WINE        : {_WINE}\n")
+                f.write(f"rar_path     : {rar_path}\n")
+                f.write(f"u_rar        : {u_rar}\n")
+                f.write(f"dest_dir     : {dest_dir}\n")
+                f.write(f"u_dest       : {u_dest}\n\n")
+                f.write("Candidates tried:\n")
+                for t in tried:
+                    f.write(f"  {t}\n")
+        except Exception:
+            pass
+
         if _WINE or sys.platform.startswith("linux"):
             raise UpdateError(
                 "No extraction tool found.\n"
-                "Install 7zip or unrar:\n"
-                "  Arch/CachyOS:  sudo pacman -S 7zip unrar\n"
-                "  Ubuntu/Debian: sudo apt install 7zip unrar"
+                "Diagnostic log written to ge_launcher_diag.txt\n"
+                "Install: sudo pacman -S 7zip unrar"
             )
         raise UpdateError(
             "No extraction tool found.\n"
+            "Diagnostic log written to ge_launcher_diag.txt\n"
             "Install 7-Zip (7-zip.org) or WinRAR to enable updates."
         )
 
