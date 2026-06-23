@@ -212,3 +212,107 @@ class ProgressModal:
         self._status_label.configure(text=f"Error: {msg}")
         self._bar.configure(progress_color="red")
         ctk.CTkButton(self._win, text="Close", command=self._win.destroy).pack(pady=8)
+
+
+# ---------------------------------------------------------------------------
+# App
+# ---------------------------------------------------------------------------
+
+class App(ctk.CTk):
+    def __init__(self):
+        super().__init__()
+        ctk.set_appearance_mode("dark")
+        ctk.set_default_color_theme("dark-blue")
+
+        self.title("GoldenEye Recomp Launcher")
+        self.geometry("600x320")
+        self.resizable(False, False)
+
+        self._tray = TrayManager(on_restore=self._restore, on_quit=self._quit)
+        self.protocol("WM_DELETE_WINDOW", self._do_quit)
+
+        self._build_ui()
+
+    def _build_ui(self) -> None:
+        banner_path = get_asset_path("banner.png")
+        banner_img = ctk.CTkImage(
+            light_image=Image.open(banner_path),
+            dark_image=Image.open(banner_path),
+            size=(600, 220),
+        )
+        banner_label = ctk.CTkLabel(self, image=banner_img, text="")
+        banner_label.pack()
+
+        btn_frame = ctk.CTkFrame(self, fg_color="transparent")
+        btn_frame.pack(fill="x", padx=20, pady=12)
+
+        ctk.CTkButton(
+            btn_frame,
+            text="Launch Game",
+            width=260,
+            height=44,
+            font=("Segoe UI", 14, "bold"),
+            command=self._launch_game,
+        ).pack(side="left", padx=(0, 10))
+
+        ctk.CTkButton(
+            btn_frame,
+            text="Update ReComp Engine",
+            width=260,
+            height=44,
+            font=("Segoe UI", 14, "bold"),
+            fg_color="#2a5e2a",
+            hover_color="#1e441e",
+            command=self._start_update,
+        ).pack(side="left")
+
+    def _launch_game(self) -> None:
+        game_exe = os.path.join(get_game_dir(), "GoldenEye.exe")
+        if not os.path.exists(game_exe):
+            self._show_error("GoldenEye.exe not found in launcher directory.")
+            return
+        subprocess.Popen([game_exe], cwd=get_game_dir())
+        self._to_tray()
+
+    def _start_update(self) -> None:
+        ProgressModal(self).run_update()
+
+    def _to_tray(self) -> None:
+        self.withdraw()
+        self._tray.show()
+
+    def _restore(self) -> None:
+        # Called from pystray thread - dispatch tkinter ops to main thread
+        self.after(0, self._do_restore)
+
+    def _do_restore(self) -> None:
+        self._tray.hide()
+        self.deiconify()
+        self.lift()
+        self.focus_force()
+
+    def _quit(self) -> None:
+        # Called from pystray thread - dispatch tkinter ops to main thread
+        self.after(0, self._do_quit)
+
+    def _do_quit(self) -> None:
+        self._tray.hide()
+        self.destroy()
+
+    def _show_error(self, msg: str) -> None:
+        win = ctk.CTkToplevel(self)
+        win.title("Error")
+        win.geometry("360x120")
+        win.resizable(False, False)
+        win.grab_set()
+        ctk.CTkLabel(win, text=msg, wraplength=320, font=("Segoe UI", 12)).pack(pady=20, padx=20)
+        ctk.CTkButton(win, text="OK", command=win.destroy).pack(pady=4)
+
+
+# ---------------------------------------------------------------------------
+# Entry point
+# ---------------------------------------------------------------------------
+
+if __name__ == "__main__":
+    app = App()
+    app.mainloop()
