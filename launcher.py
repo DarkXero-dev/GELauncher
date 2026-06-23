@@ -4,6 +4,7 @@ import shutil
 import threading
 import subprocess
 import tempfile
+import time
 import requests
 import customtkinter as ctk
 from PIL import Image, ImageTk
@@ -152,17 +153,22 @@ class UpdateManager:
         ]
         for cmd in candidates:
             try:
-                result = subprocess.run(
+                proc = subprocess.Popen(
                     cmd,
                     stdin=subprocess.DEVNULL,
                     stdout=subprocess.DEVNULL,
                     stderr=subprocess.DEVNULL,
-                    timeout=300,
                 )
-                if result.returncode == 0:
-                    return
-            except FileNotFoundError:
+            except (FileNotFoundError, OSError):
                 continue
+            # Poll so the thread stays live and progress animates
+            fake = 0.0
+            while proc.poll() is None:
+                time.sleep(0.4)
+                fake = min(fake + 0.008, 0.45)
+                self.progress("Extracting archive...", fake)
+            if proc.returncode == 0:
+                return
         if sys.platform.startswith("linux"):
             raise UpdateError(
                 "No extraction tool found.\n"
@@ -349,7 +355,7 @@ class App(ctk.CTk):
             border_color="#7a5810",
             command=self._show_about,
         )
-        info_btn.place(x=560, y=7)
+        info_btn.place(x=548, y=7)
 
         # Centered buttons
         btn_frame = ctk.CTkFrame(self, fg_color="transparent")
